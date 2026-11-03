@@ -24,7 +24,6 @@ using cedit::mac::text_metrics_changed;
 
 namespace {
 
-constexpr unsigned short console_rows = 25;
 constexpr std::size_t first_rows = 8;  // enough for a short program and the closing lines
 constexpr CGFloat inset = 6;
 constexpr std::size_t read_limit = 64 * 1024;  // per wake-up, so endless output cannot starve the event loop
@@ -70,7 +69,7 @@ NSString* string_of(const std::u32string& line) {
 @property(nonatomic, copy) void (^onKeys)(NSString* bytes);
 @property(nonatomic, readonly) std::size_t lineCount;
 - (void)show:(std::string_view)output;
-- (void)terminalChanged;  // after new output or a new size: re-lays out and shows the cursor line
+- (void)terminalChanged;  // after new output or a new size: re-lays out and shows the cursor's line
 @end
 
 @implementation CEConsoleView {
@@ -108,7 +107,8 @@ NSString* string_of(const std::u32string& line) {
     const CGFloat height = 2 * inset + static_cast<CGFloat>(_terminal.lines().size()) * metrics.line_height;
     [self setFrameSize:NSMakeSize(std::max(visible.width, console_width()), std::max(visible.height, height))];
     [self setNeedsDisplay:YES];
-    [self scrollRectToVisible:NSMakeRect(0, height - metrics.line_height - inset, 1, metrics.line_height + inset)];
+    const CGFloat cursor = inset + static_cast<CGFloat>(_terminal.cursor_line()) * metrics.line_height;
+    [self scrollRectToVisible:NSMakeRect(0, cursor, 1, metrics.line_height + inset)];
 }
 
 - (void)drawRect:(NSRect)dirty {
@@ -130,7 +130,8 @@ NSString* string_of(const std::u32string& line) {
 
 - (void)keyDown:(NSEvent*)event {
     NSString* characters = event.characters;
-    if (characters.length == 0 || !self.onKeys) return;
+    // A Command key no menu took is not typing: the letter must not reach the program, nor close the pane.
+    if (characters.length == 0 || !self.onKeys || (event.modifierFlags & NSEventModifierFlagCommand)) return;
     // Keys are told apart without modifiers: Control-C also arrives as 0x03, the code of the keypad Enter key.
     NSString* plain = event.charactersIgnoringModifiers;
     const unichar key = [(plain.length > 0 ? plain : characters) characterAtIndex:0];
@@ -154,7 +155,10 @@ NSString* string_of(const std::u32string& line) {
 - (void)paste:(id)sender {
     (void)sender;
     NSString* text = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
-    if (text && self.onKeys) self.onKeys([text stringByReplacingOccurrencesOfString:@"\n" withString:@"\r"]);
+    if (!text || !self.onKeys) return;
+    // Enter sends CR, whichever line ends the text came with.
+    text = [text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\r"];
+    self.onKeys([text stringByReplacingOccurrencesOfString:@"\n" withString:@"\r"]);
 }
 
 - (void)copy:(id)sender {
@@ -175,6 +179,9 @@ NSString* string_of(const std::u32string& line) {
     dispatch_source_t _exitWatch;
     std::chrono::steady_clock::time_point _started;
     std::size_t _rows;  // rows the pane shows; it only grows, so the code above never jumps back
+    std::string _input;  // typed or pasted, not yet taken by the terminal, whose queue holds about 1 KB
+    BOOL _inputRetry;
+    BOOL _exitSeen;
     BOOL _exited;
 }
 
@@ -229,7 +236,7 @@ NSString* string_of(const std::u32string& line) {
 - (void)start:(NSString*)program directory:(NSString*)directory {
     _started = std::chrono::steady_clock::now();
     _child = cedit::spawn_in_pty(program.fileSystemRepresentation, directory.fileSystemRepresentation,
-                               cedit::Terminal::columns, console_rows);
+                               cedit::Terminal::columns, cedit::Terminal::rows);
     if (!_child) {
         [self finishWith:"Program başlatılamadı."];
         return;
@@ -243,7 +250,7 @@ NSString* string_of(const std::u32string& line) {
 
     _exitWatch = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, static_cast<uintptr_t>(_child->pid),
                                         DISPATCH_PROC_EXIT, dispatch_get_main_queue());
-    dispatch_source_set_event_handler(_exitWatch, ^{ [weakSelf reap]; });
+    dispatch_source_set_event_handler(_exitWatch, ^{ [weakSelf exitSeen]; });
     dispatch_resume(_exitWatch);
     [self reap];  // a program that already finished before the watch was armed
 }
@@ -275,17 +282,29 @@ NSString* string_of(const std::u32string& line) {
 // Grows the pane with the lines written so far.
 - (void)show:(std::string_view)output {
     [_view show:output];
-    const std::size_t rows = std::min<std::size_t>(console_rows, _view.lineCount);
+    const std::size_t rows = std::min(cedit::Terminal::rows, _view.lineCount);
     if (rows <= _rows) return;
     _rows = rows;
     if (self.onResize) self.onResize();
+}
+
+// The kernel reports an exit just before the program can be waited for, and only once.
+- (void)exitSeen {
+    _exitSeen = YES;
+    [self reap];
 }
 
 - (void)reap {
     if (_exited || !_child) return;
     int status = 0;
     const pid_t done = ::waitpid(_child->pid, &status, WNOHANG);
-    if (done == 0) return;
+    if (done == 0) {
+        if (_exitSeen) {
+            __weak CEConsoleSession* weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [weakSelf reap]; });
+        }
+        return;
+    }
     [self drain];
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - _started;
     [self finishWith:done == _child->pid ? cedit::describe_exit(status, elapsed.count()) : "Program sona erdi."];
@@ -314,7 +333,38 @@ NSString* string_of(const std::u32string& line) {
         return;
     }
     const char* bytes = keys.UTF8String;
-    if (bytes && _reader) (void)::write(_child->master, bytes, std::strlen(bytes));
+    if (!bytes || !_reader) return;
+    // Behind a queue the program does not read, Control-C would never arrive.
+    if (!_input.empty() && std::strcmp(bytes, "\x03") == 0) {
+        _input.clear();
+        ::kill(-_child->pid, SIGINT);
+        return;
+    }
+    _input += bytes;
+    [self sendInput];
+}
+
+// As much as the terminal takes now; the rest follows as the program reads.
+- (void)sendInput {
+    while (!_input.empty() && _reader) {
+        const ssize_t sent = ::write(_child->master, _input.data(), _input.size());
+        if (sent > 0) {
+            _input.erase(0, static_cast<std::size_t>(sent));
+        } else if (sent < 0 && errno == EAGAIN) {
+            if (_inputRetry) return;
+            _inputRetry = YES;
+            __weak CEConsoleSession* weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                CEConsoleSession* session = weakSelf;
+                if (!session) return;
+                session->_inputRetry = NO;
+                [session sendInput];
+            });
+            return;
+        } else if (sent < 0 && errno != EINTR) {
+            return;  // the program closed its terminal
+        }
+    }
 }
 
 - (void)close {

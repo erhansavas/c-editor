@@ -81,6 +81,8 @@ DisplayLine display_line(std::string_view line) {
                 const char32_t value = decoded.code_point - 0x10000;
                 units.push_back(static_cast<unichar>(0xD800 + (value >> 10)));
                 units.push_back(static_cast<unichar>(0xDC00 + (value & 0x3FF)));
+            } else if (decoded.code_point < 0x20 || (decoded.code_point >= 0x7F && decoded.code_point < 0xA0)) {
+                units.push_back(static_cast<unichar>(utf8::replacement));  // CoreText gives a control no cell; the caret counts one
             } else {
                 units.push_back(static_cast<unichar>(decoded.code_point));
             }

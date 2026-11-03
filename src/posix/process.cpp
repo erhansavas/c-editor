@@ -4,6 +4,7 @@
 #include <spawn.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 #include <util.h>
 
@@ -58,24 +59,26 @@ std::string describe_exit(int wait_status, double seconds) {
     const std::string after = "Program " + duration_text(seconds);
     if (!WIFSIGNALED(wait_status))
         return after + " içinde bitti, çıkış kodu " + std::to_string(WEXITSTATUS(wait_status)) + ".";
-    // A crash takes two lines, what happened and why, so neither wraps in the 80-column console.
+    // A crash takes its own lines, what happened and why, so none wraps in the 80-column console.
+    constexpr std::string_view memory = "İzin verilmeyen bir bellek alanına erişti.\r\n"
+                                        "Örneğin scanf’te & unutulmuş ya da dizinin sınırı aşılmış olabilir.";
     const auto crashed = [&](std::string_view name, std::string_view reason) {
         return after + " sonra çöktü (" + std::string(name) + ").\r\n" + std::string(reason);
     };
     switch (const int signal = WTERMSIG(wait_status)) {
-    case SIGSEGV: return crashed("segmentation fault", "İzin verilmeyen bir bellek alanına erişti.");
-    case SIGBUS: return crashed("bus error", "İzin verilmeyen bir bellek alanına erişti.");
+    case SIGSEGV: return crashed("segmentation fault", memory);
+    case SIGBUS: return crashed("bus error", memory);
     case SIGFPE: return crashed("floating-point exception", "Aritmetik bir hata oluştu.");
     case SIGILL:
     case SIGTRAP: return crashed("trap", "Hiç çalışmaması gereken bir koda ulaştı.");
-    case SIGABRT: return after + " sonra abort() ile kendini durdurdu, örneğin bir assert tuttu.";
+    case SIGABRT: return after + " sonra abort() ile kendini durdurdu.\r\nÖrneğin bir assert koşulu sağlanmadı.";
     case SIGINT: return after + " sonra Control-C ile durduruldu.";
     case SIGKILL: return after + " sonra sonlandırıldı.";
     default: return after + " sonra " + std::to_string(signal) + " numaralı sinyalle durduruldu.";
     }
 }
 
-std::optional<Captured> run_capture(const std::vector<std::string>& argv) {
+std::optional<Captured> run_capture(const std::vector<std::string>& argv, const std::string& directory) {
     int pipe_fds[2];
     if (::pipe(pipe_fds) != 0) return std::nullopt;
     // The child inherits only stdin, stdout and stderr, never another descriptor of this process.
@@ -84,6 +87,7 @@ std::optional<Captured> run_capture(const std::vector<std::string>& argv) {
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
+    if (!directory.empty()) posix_spawn_file_actions_addchdir(&actions, directory.c_str());
     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
@@ -126,15 +130,29 @@ std::optional<PtyChild> spawn_in_pty(const std::string& program, const std::stri
     size.ws_row = rows;
     const int descriptors = ::getdtablesize();
     int master = -1;
-    const pid_t pid = ::forkpty(&master, nullptr, nullptr, &size);
-    if (pid < 0) return std::nullopt;
+    int slave = -1;
+    if (::openpty(&master, &slave, nullptr, nullptr, &size) != 0) return std::nullopt;
+    // Set before the program exists: Backspace takes a whole UTF-8 letter off the typed line, not its last byte.
+    struct termios terminal {};
+    if (::tcgetattr(slave, &terminal) == 0) {
+        terminal.c_iflag |= IUTF8;
+        ::tcsetattr(slave, TCSANOW, &terminal);
+    }
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(master);
+        ::close(slave);
+        return std::nullopt;
+    }
     if (pid == 0) {
+        if (::login_tty(slave) != 0) ::_exit(127);
         // The program inherits only its terminal: a compiler pipe left open here would stall that compile.
         for (int fd = STDERR_FILENO + 1; fd < descriptors; ++fd) ::close(fd);
         if (::chdir(directory.c_str()) != 0) ::_exit(127);
         ::execve(program.c_str(), argument_pointers.data(), variable_pointers.data());
         ::_exit(127);
     }
+    ::close(slave);
     ::fcntl(master, F_SETFL, ::fcntl(master, F_GETFL) | O_NONBLOCK);
     ::fcntl(master, F_SETFD, FD_CLOEXEC);
     return PtyChild{master, pid};

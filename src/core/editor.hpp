@@ -53,6 +53,8 @@ public:
     void delete_backward();
     void delete_forward();
     void delete_to_line_start();
+    bool can_undo() const { return !undo_.empty(); }
+    bool can_redo() const { return !redo_.empty(); }
     bool undo();
     bool redo();
 
@@ -77,7 +79,7 @@ private:
         std::size_t position;
         std::string removed;
         std::string inserted;
-        std::size_t caret_before, anchor_before;
+        std::size_t caret_before, anchor_before, caret_after;
         std::uint64_t state_before, state_after;
     };
 
@@ -85,8 +87,10 @@ private:
     void apply(std::size_t position, std::size_t remove_length, std::string_view with);
     void rebuild_lines();
     std::string_view indentation(std::size_t line) const;
-    std::size_t statement_header(std::size_t line) const;  // the control line above, if any
-    // The line of the '{' that a '}' at `offset` closes, if any; braces in quotes or // comments
+    // For each line up to `last`, whether it starts inside a /* comment */.
+    std::vector<bool> comment_starts(std::size_t last) const;
+    std::size_t statement_header(std::size_t line) const;  // the control line above, if any; comments do not count
+    // The line of the '{' that a '}' at `offset` closes, if any; braces in quotes or comments
     // (printf("{")) do not count.
     std::size_t opening_line(std::size_t offset) const;
     std::size_t clamp_boundary(std::size_t offset) const;

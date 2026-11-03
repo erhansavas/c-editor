@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,10 +35,6 @@ NSString* ns(std::string_view text) {
     return string ? string : @"";
 }
 
-NSArray<UTType*>* source_types() {
-    return @[ UTTypeCSource, UTTypeCHeader, UTTypeCPlusPlusSource, UTTypeCPlusPlusHeader ];
-}
-
 void alert(NSString* message, NSString* detail) {
     NSAlert* box = [[NSAlert alloc] init];
     box.messageText = message;
@@ -45,9 +42,25 @@ void alert(NSString* message, NSString* detail) {
     [box runModal];
 }
 
+// The index of the button the user chose.
+NSInteger ask(NSString* message, NSString* detail, NSArray<NSString*>* buttons) {
+    NSAlert* box = [[NSAlert alloc] init];
+    box.messageText = message;
+    box.informativeText = detail;
+    for (NSString* title in buttons) {
+        NSButton* button = [box addButtonWithTitle:title];
+        if ([title isEqualToString:@"Vazgeç"]) button.keyEquivalent = @"\033";  // AppKit gives Escape only to a button titled "Cancel"
+    }
+    return [box runModal] - NSAlertFirstButtonReturn;
+}
+
 }  // namespace
 
 NSString* const CEDocumentTabs = @"CEDocument";
+
+NSArray<UTType*>* source_types() {
+    return @[ UTTypeCSource, UTTypeCHeader, UTTypeCPlusPlusSource, UTTypeCPlusPlusHeader ];
+}
 
 // Compiler output; clicking a diagnostic line jumps to it in the editor.
 @interface CELogView : NSView
@@ -134,6 +147,8 @@ NSString* const CEDocumentTabs = @"CEDocument";
     cedit::Editor* _editor;  // owned by _editorView
     cedit::FileFormat _format;
     cedit::FileFormat _savedFormat;  // as on disk: any other _format is an unsaved change
+    BOOL _mixedLineEnds;           // the file mixes CRLF and LF; saving unifies them, so it asks first
+    std::optional<cedit::FileStamp> _diskStamp;  // the file as this window last read or wrote it
     NSString* _path;
     NSScrollView* _editorScroll;
     NSScrollView* _logScroll;
@@ -145,7 +160,8 @@ NSString* const CEDocumentTabs = @"CEDocument";
     CEConsoleSession* _console;  // its pane sits under the build messages while it exists
     NSBox* _logDivider;
     NSBox* _consoleDivider;
-    NSString* _workDir;  // compiler scratch folder of this document
+    NSString* _workDir;  // compiler scratch folder of this document, removed with it
+    std::uint64_t _buildRevision;  // the text the running build compiles
     BOOL _compiling;
     BOOL _closed;
 }
@@ -158,6 +174,7 @@ NSString* const CEDocumentTabs = @"CEDocument";
 }
 
 + (instancetype)openPath:(NSString*)path {
+    const std::optional<cedit::FileStamp> stamp = cedit::file_stamp(path.fileSystemRepresentation);
     const std::optional<std::string> bytes = cedit::read_file(path.fileSystemRepresentation);
     if (!bytes) {
         alert([NSString stringWithFormat:@"“%@” açılamadı.", path.lastPathComponent], path);
@@ -166,6 +183,8 @@ NSString* const CEDocumentTabs = @"CEDocument";
     CEDocumentWindow* document = [[self alloc] init];
     cedit::LoadedText loaded = cedit::load_text(*bytes);
     document->_format = document->_savedFormat = loaded.format;
+    document->_mixedLineEnds = loaded.mixed_line_ends;
+    document->_diskStamp = stamp;
     document->_path = [path copy];
     [document buildWindowWithText:std::move(loaded.text)];
     return document;
@@ -382,6 +401,11 @@ NSString* const CEDocumentTabs = @"CEDocument";
 #pragma mark - Saving
 
 - (BOOL)writeTo:(NSString*)path {
+    if (_mixedLineEnds &&
+        ask([NSString stringWithFormat:@"“%@” dosyasında Windows ve Mac satır sonları karışık.", path.lastPathComponent],
+            [NSString stringWithFormat:@"Kaydedince hepsi %s olur.", _format.crlf ? "CRLF (Windows)" : "LF (macOS)"],
+            @[ @"Kaydet", @"Vazgeç" ]) != 0)
+        return NO;
     const auto bytes = cedit::store_text(_editor->text(), _format);
     if (!bytes) {
         const std::size_t offset = bytes.error();
@@ -399,9 +423,32 @@ NSString* const CEDocumentTabs = @"CEDocument";
         return NO;
     }
     _path = [path copy];
+    _diskStamp = cedit::file_stamp(path.fileSystemRepresentation);
+    _mixedLineEnds = NO;
     _editor->mark_saved();
     _savedFormat = _format;
     [self updateTitle];
+    return YES;
+}
+
+// Replaces the text with the file's, as one step Undo can take back.
+- (BOOL)reload {
+    const std::optional<cedit::FileStamp> stamp = cedit::file_stamp(_path.fileSystemRepresentation);
+    const std::optional<std::string> bytes = cedit::read_file(_path.fileSystemRepresentation);
+    if (!bytes) {
+        alert([NSString stringWithFormat:@"“%@” açılamadı.", _path.lastPathComponent], _path);
+        return NO;
+    }
+    const cedit::LoadedText loaded = cedit::load_text(*bytes);
+    const std::size_t line = _editor->line_of(_editor->caret());
+    _editor->select_all();
+    _editor->insert(loaded.text);
+    _editor->mark_saved();
+    _format = _savedFormat = loaded.format;
+    _mixedLineEnds = loaded.mixed_line_ends;
+    _diskStamp = stamp;
+    [_editorView goToLine:line column:0];
+    [self updateFormat];
     return YES;
 }
 
@@ -415,7 +462,25 @@ NSString* const CEDocumentTabs = @"CEDocument";
     return [self writeTo:panel.URL.path];
 }
 
-- (BOOL)save { return _path ? [self writeTo:_path] : [self saveAs]; }
+// Writes only what needs it: an unchanged file keeps its bytes, and another program's changes are never
+// overwritten without asking. Afterwards the text and the file agree, unless it returns NO.
+- (BOOL)save {
+    if (!_path) return [self saveAs];
+    const std::optional<cedit::FileStamp> stamp = cedit::file_stamp(_path.fileSystemRepresentation);
+    if (stamp && _diskStamp && stamp != _diskStamp) {
+        const NSInteger answer =
+            ask([NSString stringWithFormat:@"“%@” başka bir program tarafından değiştirildi.", _path.lastPathComponent],
+                self.modified ? @"Yeniden Yükle dosyanın şimdiki hâlini gösterir; Geri Al kaydetmediğiniz metni geri getirir. Üzerine Yaz, dosyanın yerine sizin metninizi koyar."
+                              : @"Yeniden Yükle dosyanın şimdiki hâlini gösterir. Üzerine Yaz, dosyanın yerine gördüğünüz metni koyar.",
+                @[ @"Yeniden Yükle", @"Vazgeç", @"Üzerine Yaz" ]);
+        if (answer == 0) return [self reload];
+        if (answer != 2) return NO;
+    } else if (stamp && !self.modified) {
+        return YES;
+    }
+    return [self writeTo:_path];
+}
+
 - (void)saveDocument:(id)sender { (void)sender, [self save]; }
 - (void)saveDocumentAs:(id)sender { (void)sender, [self saveAs]; }
 
@@ -432,7 +497,11 @@ NSString* const CEDocumentTabs = @"CEDocument";
     discard.keyEquivalent = @"d";
     discard.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     const NSModalResponse answer = [box runModal];
-    if (answer == NSAlertFirstButtonReturn) return [self save];
+    if (answer == NSAlertFirstButtonReturn) {
+        // After a reload there is new text to look at, not a window to close.
+        const std::uint64_t revision = _editor->revision();
+        return [self save] && _editor->revision() == revision;
+    }
     return answer == NSAlertThirdButtonReturn;
 }
 
@@ -443,11 +512,16 @@ NSString* const CEDocumentTabs = @"CEDocument";
 
 - (void)windowWillClose:(NSNotification*)notification {
     (void)notification;
-    _closed = YES;
     [NSNotificationCenter.defaultCenter removeObserver:self];
+    [self endWork];
+    if (self.onClose) self.onClose(self);
+}
+
+- (void)endWork {
+    _closed = YES;
     [_console close];
     _console = nil;
-    if (self.onClose) self.onClose(self);
+    if (_workDir) [NSFileManager.defaultManager removeItemAtPath:_workDir error:nil];
 }
 
 #pragma mark - Compile and run
@@ -474,14 +548,22 @@ NSString* const CEDocumentTabs = @"CEDocument";
     NSString* compat = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"compat"];
     const cedit::CompileRequest request{_path.fileSystemRepresentation, _editor->text(), compat.fileSystemRepresentation,
                                         _workDir.fileSystemRepresentation};
+    _buildRevision = _editor->revision();
     __weak CEDocumentWindow* weakSelf = self;
+    NSString* workDir = _workDir;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (!cedit::developer_tools_installed()) {
             dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf offerDeveloperTools]; });
             return;
         }
         const cedit::CompileResult result = cedit::compile(request);
-        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf compiled:result]; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CEDocumentWindow* document = weakSelf;
+            if (document && !document->_closed)
+                [document compiled:result];
+            else  // closed during the build, which wrote here after the window cleared up
+                [NSFileManager.defaultManager removeItemAtPath:workDir error:nil];
+        });
     });
 }
 
@@ -505,12 +587,13 @@ NSString* const CEDocumentTabs = @"CEDocument";
 - (void)compiled:(const cedit::CompileResult&)result {
     _compiling = NO;
     _runButton.enabled = YES;
-    if (_closed) return;
     [self showLog:result.log];
-    [_editorView setDiagnostics:result.diagnostics];
+    // Text typed during the build has moved its lines: the messages stand, the marks and the jump would be wrong.
+    const BOOL current = _editor->revision() == _buildRevision;
+    if (current) [_editorView setDiagnostics:result.diagnostics];
     if (!result.ok) {
-        for (const cedit::Diagnostic& diagnostic : result.diagnostics)
-            if (diagnostic.error) return [_editorView goToLine:diagnostic.line column:diagnostic.column];
+        const cedit::Diagnostic* problem = cedit::first_problem(result.diagnostics);
+        if (current && problem) [_editorView goToLine:problem->line column:problem->column];
         return;
     }
     // Without messages to read, the build summary heads the console instead of a pane of its own.

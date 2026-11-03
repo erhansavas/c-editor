@@ -13,8 +13,8 @@ struct Captured {
     std::string output;  // stdout and stderr interleaved
 };
 
-// Runs argv[0] (an absolute path) to completion with stdin closed.
-std::optional<Captured> run_capture(const std::vector<std::string>& argv);
+// Runs argv[0] (an absolute path) to completion with stdin closed, in `directory` if one is given.
+std::optional<Captured> run_capture(const std::vector<std::string>& argv, const std::string& directory = {});
 
 struct PtyChild {
     int master;  // non-blocking, close-on-exec

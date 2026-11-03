@@ -25,9 +25,12 @@ struct Diagnostic {
 };
 
 // clang "path:line:col: error|warning|fatal error: message" lines that refer to `source_path`, with the
-// "fix-it:" lines of -fdiagnostics-parseable-fixits that belong to them. Fix-its name physical lines,
-// which differ from the diagnostic's own when a #line directive is in play.
+// "fix-it:" lines of -fdiagnostics-parseable-fixits that belong to them.
 std::vector<Diagnostic> parse_diagnostics(std::string_view compiler_output, std::string_view source_path);
+
+// Where a failed build sends the caret: its first error or, when only the linker failed, the call it
+// could not resolve. Null if neither exists.
+const Diagnostic* first_problem(const std::vector<Diagnostic>& diagnostics);
 
 // A short Turkish explanation for a beginner of a common compiler message about `source_line`, or "".
 std::string explain(std::string_view message, std::string_view source_line);

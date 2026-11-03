@@ -565,6 +565,8 @@ std::size_t utf8_length(std::string_view text, NSUInteger units) {
 
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
     const SEL action = item.action;
+    if (action == @selector(undo:)) return _editor.can_undo();
+    if (action == @selector(redo:)) return _editor.can_redo();
     if (action == @selector(copy:) || action == @selector(cut:)) return _editor.has_selection();
     if (action == @selector(paste:)) return [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] != nil;
     return YES;

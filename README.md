@@ -36,14 +36,14 @@ yaptığınızda nerede olduğunu ve satırın ne olması gerektiğini söyler; 
 C Editor macOS 27 yüklü Apple silicon (M1 ve sonrası) Mac’lerde çalışır. Şu an beta aşamasındadır: günlük
 kullanıma hazırdır, ama 1.0’a kadar davranışı değişebilir.
 
-1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.1-macOS-arm64.dmg`
+1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.2-macOS-arm64.dmg`
    dosyasını indirin, açın ve **C Editor**’ü **Applications** (Uygulamalar) klasörüne sürükleyin.
 2. Uygulama Apple onaylı (notarize) olmadığı için macOS ilk açılışı engeller: **Sistem Ayarları › Gizlilik ve
    Güvenlik**’e gidip **Yine de Aç**’ı seçin.
 3. Programları derlemek için Apple’ın ücretsiz Komut Satırı Araçları gerekir. Kurulu değilse ⌘R’ye ilk
    bastığınızda C Editor bunu söyler; **Kur**’a tıklamanız yeterli.
 
-İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.1-macOS-arm64.dmg.sha256`
+İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.2-macOS-arm64.dmg.sha256`
 
 ## Kullanım
 
@@ -58,7 +58,8 @@ boşlukla yardım eder, kodu sizin yerinize yazmaz:
 
 - `{` ile ya da süslü parantezsiz `if (...)`, `else`, `for (...)`, `while (...)`, `do` ile biten satırdan sonra
   yeni satır bir kademe içeriden başlar; o tek komutun ardından geri döner.
-- `}` kendi `{` satırıyla hizalanır: boş satıra yazınca da, önünde Enter’a basınca da.
+- `}` kendi `{` satırıyla hizalanır: boş satıra yazınca da, önünde Enter’a basınca da. Tırnak ya da yorum
+  (`//`, `/* */`) içindeki parantezler sayılmaz.
 - Girintide Backspace bir kademe (4 boşluk) birden siler.
 - Soluk dikey çizgiler hangi satırın hangi bloğa ait olduğunu gösterir.
 
@@ -68,7 +69,7 @@ boşlukla yardım eder, kodu sizin yerinize yazmaz:
   <img src="docs/screenshots/hatalar.png" width="800" alt="C Editor’de iki hata ve altlarında Türkçe açıklamaları">
 </p>
 
-Hatalı satırlar işaretlenir ve imleç ilk hataya gider. Derleyicinin mesajları terimleri tanıyın diye İngilizce
+Hatalı satırlar işaretlenir ve imleç ilk hataya, derleyicinin bulamadığı bir fonksiyon adında ise o çağrıya gider. Derleyicinin mesajları terimleri tanıyın diye İngilizce
 kalır; altlarında Türkçe açıklaması çıkar. Mesaja tıklayınca o satıra gidilir. Program çalışırken çökerse konsol
 ne olduğunu (ör. segmentation fault) ve nedenini Türkçe söyler.
 
@@ -89,11 +90,18 @@ ne olduğunu (ör. segmentation fault) ve nedenini Türkçe söyler.
 Yeni dosyalar Windows’un kaydettiği biçimdedir (Windows-1254, CRLF), böylece okuldaki bilgisayarlarda da düzgün
 açılır. Biçim durum çubuğundan değiştirilebilir.
 
+### Kaydederken
+
+Yalnızca değişen dosya yazılır; açıp çalıştırdığınız dosyanın baytları olduğu gibi kalır. UTF-8 olmayan her dosya
+Windows-1254 olarak açılır, her baytı korunur. Dosyayı başka bir program değiştirdiyse C Editor üzerine yazmadan önce
+sorar (Yeniden Yükle, Vazgeç, Üzerine Yaz). Salt okunur dosyanın üzerine yazmaz. Windows ve Mac satır sonları karışık
+bir dosyayı da ancak siz onaylarsanız tek biçime getirir.
+
 ### Kısayollar
 
 | Kısayol | İş |
 | --- | --- |
-| **⌘R** ya da **F11** | Derle ve çalıştır |
+| **⌘R** ya da **F11** | Derle ve çalıştır (macOS’un “Masaüstünü Göster” kısayolu açıksa F11 uygulamaya ulaşmaz) |
 | **Ctrl+C** | Çalışan programı durdur |
 | **⌘N** / **⌘T** / **⌘O** | Yeni dosya / yeni sekme / aç |
 | **⌘S** / **⌥⌘S** | Kaydet / farklı kaydet |

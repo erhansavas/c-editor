@@ -87,7 +87,7 @@ std::string quoted(std::string_view text, std::size_t from = 0) {
     return close == npos ? std::string() : std::string(text.substr(open + 1, close - open - 1));
 }
 
-// The header a course program most often forgets for a library function.
+// The header a beginner most often forgets for a library function.
 std::string_view header_of(std::string_view function) {
     static constexpr std::array<std::pair<std::string_view, std::string_view>, 25> headers = {{
         {"sqrt", "math.h"},     {"pow", "math.h"},      {"fabs", "math.h"},    {"floor", "math.h"},
@@ -101,6 +101,14 @@ std::string_view header_of(std::string_view function) {
     for (const auto& [name, header] : headers)
         if (name == function) return header;
     return {};
+}
+
+// Word processors and web pages write “ ” ‘ ’, which C does not know. Clang's fix deletes them, which
+// is not the correction: the writer needs the plain quote there.
+bool curly_quote(std::string_view message) {
+    for (const std::string_view quote : {"<U+201C>", "<U+201D>", "<U+2018>", "<U+2019>", "“", "”", "‘", "’"})
+        if (message.find(quote) != npos) return true;
+    return false;
 }
 
 std::string missing_function(const std::string& name) {
@@ -121,7 +129,7 @@ std::vector<Diagnostic> parse_diagnostics(std::string_view output, std::string_v
         output.remove_prefix(newline == npos ? output.size() : newline + 1);
         if (line.starts_with("fix-it:")) {
             if (!collecting) continue;
-            if (++fixits == 1)
+            if (++fixits == 1 && !curly_quote(diagnostics.back().message))
                 diagnostics.back().fix = parse_fix(line, source_path);
             else
                 diagnostics.back().fix.reset();  // several edits are not one sure correction
@@ -138,10 +146,19 @@ std::vector<Diagnostic> parse_diagnostics(std::string_view output, std::string_v
     return diagnostics;
 }
 
+const Diagnostic* first_problem(const std::vector<Diagnostic>& diagnostics) {
+    for (const Diagnostic& diagnostic : diagnostics)
+        if (diagnostic.error) return &diagnostic;
+    for (const Diagnostic& diagnostic : diagnostics)
+        if (diagnostic.message.starts_with("call to undeclared")) return &diagnostic;
+    return nullptr;
+}
+
 std::string explain(std::string_view message, std::string_view source_line) {
     const auto starts = [&](std::string_view text) { return message.starts_with(text); };
     const auto has = [&](std::string_view text) { return message.find(text) != npos; };
     const std::string name = quoted(message);
+    if (curly_quote(message)) return "Bu tırnak işareti C’de geçmez: klavyedeki düz tırnağı (\" ya da ') yazın.";
     if (starts("expected ';'")) return "Noktalı virgül (;) eksik.";
     if (starts("use of undeclared identifier '")) {
         if (has("did you mean '")) return "“" + name + "” tanımlı değil.";  // the compiler's fix names the right one
@@ -189,6 +206,17 @@ std::string explain(std::string_view message, std::string_view source_line) {
     if (starts("unused variable '")) return "“" + name + "” tanımlanmış ama hiç kullanılmamış.";
     if (starts("non-void function does not return a value"))
         return "Fonksiyon her durumda bir değer döndürmüyor; sonuna bir return satırı ekleyin.";
+    if (starts("non-void function '") && has("should return a value"))
+        return "Bu fonksiyon değer döndürmeli: return’den sonra bir değer yazın.";
+    if (has("' file not found")) return "“" + name + "” adında bir başlık dosyası bulunamadı: adını kontrol edin.";
+    if (starts("expected parameter declarator"))
+        return "Bu satır fonksiyonun dışında kalmış: komutlar main’in { } bloğunun içinde olmalı.";
+    if (starts("expression is not assignable")) return "= işaretinin solunda değer alabilecek bir değişken olmalı.";
+    if (starts("cannot assign to variable '") && has("const-qualified"))
+        return "“" + name + "” const tanımlanmış: değeri sonradan değiştirilemez.";
+    if (starts("'break' statement not in")) return "break yalnızca bir döngünün ya da switch’in içinde kullanılabilir.";
+    if (starts("'continue' statement not in")) return "continue yalnızca bir döngünün içinde kullanılabilir.";
+    if (starts("'case' statement not in")) return "case yalnızca bir switch’in içinde kullanılabilir.";
     if (starts("return type of 'main' is not 'int'")) return "main’in dönüş türü int olmalı: int main() yazın.";
     if (starts("type specifier missing")) return "Tür yazılmamış: örneğin main() yerine int main() yazın.";
     if (has("initializing 'char' with an expression of type 'char["))

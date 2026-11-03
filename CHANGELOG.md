@@ -1,5 +1,47 @@
 # Değişiklikler
 
+## 0.5.2 — 3 Kasım 2026
+
+Hata düzeltmeleri; yeni özellik yok.
+
+**Dosyalar**
+
+- Başka bir programın değiştirdiği dosyanın üzerine artık sessizce yazılmıyor: Yeniden Yükle, Vazgeç ya da Üzerine Yaz
+  sorulur.
+- Değişmemiş dosya kaydetmede ve ⌘R’de yeniden yazılmıyor.
+- Salt okunur dosyanın üzerine yazılmıyor; sembolik bağ, bağ olarak kalıyor.
+- Geçersiz UTF-8 içeren BOM’lu dosyalar sessizce bozulmuyor. Windows-1254’ün tanımsız yedi baytı da dahil her bayt
+  aynen korunuyor.
+- Karışık satır sonlu dosya ancak onay verilirse tek biçime getiriliyor.
+
+**Derleme ve hatalar**
+
+- `if (x);`, `for (...);`, `while (...);` gibi boş gövde uyarıları hiç çıkmıyordu; artık çıkıyor.
+- `ODEV.CPP` gibi büyük harfli uzantılar ve `.c++`, `.cp` C++ olarak derleniyor.
+- Yazım hatalı fonksiyon adında (`prinf`) imleç o satıra gidiyor.
+- Derleme sürerken yazı yazılırsa imleç yerinden oynamıyor, yanlış satır işaretlenmiyor.
+- Yeni açıklamalar: bulunamayan başlık dosyası, fonksiyon dışında kalan kod, `return`’de eksik değer, atanamayan
+  ifade, `const`, yersiz `break`/`continue`/`case`, kıvrık tırnaklar. Kıvrık tırnakta yanlış “silinmeli” önerisi kalktı.
+- Bellek hatası açıklamasına olası neden eklendi; `assert` açıklamasındaki yanlış ifade düzeltildi.
+
+**Konsol**
+
+- Biten program nadiren konsolda hep çalışıyor görünüyordu; artık her bitiş yakalanıyor.
+- Türkçe harf üzerinde Backspace programa yarım harf bırakmıyor.
+- Uzun yapıştırmalar kesilmiyor; CRLF’li metin çift satır olmuyor.
+- Menüde karşılığı olmayan ⌘ kısayolları programa harf olarak gitmiyor, biten konsolu kapatmıyor.
+- Silme (`ESC[K`, `ESC[J`) kipleri doğru çalışıyor; imleç konumu görünen 25 satıra göre; pencere başlığı ve karakter
+  kümesi dizileri ekrana yazılmıyor. Bitmeyen kaçış dizisi belleği doldurmuyor.
+- Kapatılan sekmenin ya da uygulamanın geçici derleme klasörü siliniyor.
+
+**Düzenleme**
+
+- `/* */` yorumlarındaki parantezler ve komutlar girintiyi bozmuyor; `if (a) /* yorum */` girintileniyor.
+- Yinele imleci doğru yere koyuyor.
+- Geri Al ve Yinele yapılacak bir şey yokken menüde soluk.
+- Kapatılan sekmeyi açma, zaten açık dosyaları atlıyor.
+- Görünmeyen denetim karakterleri `�` olarak gösteriliyor; imleç hizası kaymıyor.
+
 ## 0.5.1 — 24 Ekim 2026
 
 - `}` işaretinin önünde Enter’a basınca `}` kendi `{` satırıyla hizalı olarak yeni satıra geçer; `{}` arasında

@@ -18,20 +18,14 @@ std::string_view file_name(std::string_view path) {
     return slash == std::string_view::npos ? path : path.substr(slash + 1);
 }
 
+// By its extension, in any case, as Windows file names come: only ".C" alone means C++ where ".c" does not.
 bool is_cpp(std::string_view path) {
-    for (const std::string_view extension : {".cpp", ".cc", ".cxx", ".C"})
-        if (path.ends_with(extension)) return true;
+    if (path.ends_with(".C")) return true;
+    std::string extension(path.substr(std::min(path.rfind('.'), path.size())));
+    for (char& c : extension) c = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    for (const std::string_view known : {".cpp", ".cc", ".cxx", ".cp", ".c++"})
+        if (extension == known) return true;
     return false;
-}
-
-std::string line_directive(std::string_view path) {
-    std::string directive = "#line 1 \"";
-    for (const char c : path) {
-        if (c == '"' || c == '\\') directive.push_back('\\');
-        directive.push_back(c);
-    }
-    directive += "\"\n";
-    return directive;
 }
 
 // "hata yok", "2 hata".
@@ -94,11 +88,14 @@ CompileResult compile(const CompileRequest& request) {
     const std::string work_source = request.work_dir + "/" + std::string(name);
     result.binary = request.work_dir + "/" + stem;
 
-    // The compiler always sees UTF-8; #line names the user's file in diagnostics, briefly, by its file name.
-    if (!write_file_atomic(work_source, line_directive(name) + request.text)) {
+    // The compiler always sees UTF-8, in a copy of the user's file under its own name. It runs in that
+    // folder, so diagnostics name the file briefly; a #line directive would silence warnings that compare lines.
+    if (!write_file_atomic(work_source, request.text)) {
         result.log = work_source + " yazılamadı.\n";
         return result;
     }
+    // clang has no "--": a name like "-x.c" is kept from reading as an option, and shown as itself below.
+    const std::string argument = (name.starts_with('-') ? "./" : "") + std::string(name);
     const std::vector<std::string> argv = {
         cpp ? "/usr/bin/clang++" : "/usr/bin/clang",
         "-x", cpp ? "c++" : "c",
@@ -112,25 +109,20 @@ CompileResult compile(const CompileRequest& request) {
         "-iquote", request.source_path.substr(0, request.source_path.rfind('/')),  // #include "own.h" beside it
         "-I", request.compat_dir,
         "-include", request.compat_dir + "/cedit_compat.h",
-        work_source, "-o", result.binary, "-lm",
+        "-o", result.binary, "-lm",
+        argument,
     };
     const auto started = std::chrono::steady_clock::now();
-    const std::optional<Captured> captured = run_capture(argv);
+    std::optional<Captured> captured = run_capture(argv, request.work_dir);
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
     if (!captured) {
         result.log = "Derleyici başlatılamadı: " + argv[0] + "\n";
         return result;
     }
     result.ok = captured->exit_code == 0;
+    if (argument != name)
+        for (std::size_t at = 0; (at = captured->output.find(argument, at)) != std::string::npos;) captured->output.erase(at, 2);
     result.diagnostics = parse_diagnostics(captured->output, name);
-    // Fix-its count physical lines, and the #line directive above the user's text is one of them.
-    for (Diagnostic& diagnostic : result.diagnostics) {
-        if (!diagnostic.fix) continue;
-        if (diagnostic.fix->line == 0)
-            diagnostic.fix.reset();
-        else
-            --diagnostic.fix->line;
-    }
     std::size_t errors = 0;
     std::size_t warnings = 0;
     for (const Diagnostic& diagnostic : result.diagnostics) (diagnostic.error ? errors : warnings) += 1;

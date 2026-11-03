@@ -23,28 +23,51 @@ bool starts_with_word(std::string_view text, std::string_view word) {
     return text.starts_with(word) && (text.size() == word.size() || !is_word(text, word.size()));
 }
 
-// Visits the offset of each byte of `line` that is code: outside "..." and '...' and before a //
-// comment. Returns where that comment starts, or the line's size.
+// Visits each byte of `line` outside comments, telling whether it is code (false: inside quotes). `comment`
+// says whether the line starts inside a /* comment */ and, afterwards, whether the next line does.
 template <typename Visit>
-std::size_t scan_code(std::string_view line, Visit visit) {
+void scan_text(std::string_view line, bool& comment, Visit visit) {
     char quote = 0;
     for (std::size_t i = 0; i < line.size(); ++i) {
-        if (quote && line[i] == '\\') ++i;
-        else if (quote) quote = line[i] == quote ? 0 : quote;
-        else if (line[i] == '"' || line[i] == '\'') quote = line[i];
-        else if (line.substr(i, 2) == "//") return i;
-        else visit(i);
+        const std::string_view pair = line.substr(i, 2);
+        if (comment) {
+            if (pair == "*/") comment = false, ++i;
+        } else if (quote) {
+            visit(i, false);
+            if (line[i] == '\\' && i + 1 < line.size()) visit(++i, false);
+            else if (line[i] == quote) quote = 0;
+        } else if (line[i] == '"' || line[i] == '\'') {
+            quote = line[i];
+            visit(i, false);
+        } else if (pair == "//") {
+            return;
+        } else if (pair == "/*") {
+            comment = true, ++i;
+        } else {
+            visit(i, true);
+        }
     }
-    return line.size();
 }
 
-// The line without a trailing // comment (outside quotes) and without surrounding blanks.
-std::string_view code_of(std::string_view line) { return trimmed(line.substr(0, scan_code(line, [](std::size_t) {}))); }
+// Visits the offset of each byte of `line` that is code: outside quotes and comments.
+template <typename Visit>
+void scan_code(std::string_view line, bool& comment, Visit visit) {
+    scan_text(line, comment, [&](std::size_t i, bool code) {
+        if (code) visit(i);
+    });
+}
+
+// The line without its comments and without surrounding blanks, kept in `code`.
+std::string_view code_of(std::string_view line, bool& comment, std::string& code) {
+    code.clear();
+    scan_text(line, comment, [&](std::size_t i, bool) { code.push_back(line[i]); });
+    return trimmed(code);
+}
 
 // "if (...)", "else if (...)", "for (...)", "while (...)", "else" or "do" with nothing after it,
-// also after a closing "}": a control line whose single statement goes on the next line.
+// also after a closing "}": a control line whose single statement goes on the next line. `line` is
+// without comments, as code_of gives it.
 bool opens_statement(std::string_view line) {
-    line = code_of(line);
     if (line.starts_with('}')) line = trimmed(line.substr(1));
     if (line == "else" || line == "do") return true;
     if (starts_with_word(line, "else")) line = trimmed(line.substr(4));
@@ -55,7 +78,8 @@ bool opens_statement(std::string_view line) {
     // The condition's ')' must end the line; parentheses in quotes, as in ')', do not count.
     std::size_t depth = 0;
     std::size_t close = std::string_view::npos;
-    scan_code(line, [&](std::size_t i) {
+    bool comment = false;
+    scan_code(line, comment, [&](std::size_t i) {
         if (i < keyword || close != std::string_view::npos) return;
         if (line[i] == '(') ++depth;
         if (line[i] == ')' && --depth == 0) close = i;
@@ -63,23 +87,24 @@ bool opens_statement(std::string_view line) {
     return close != std::string_view::npos && close + 1 == line.size();
 }
 
-// Whether the line's code ends with '{'; one in quotes, as in printf("{, does not count.
-bool ends_with_brace(std::string_view line) {
+// Whether the code, without comments, ends with '{'; one in quotes, as in printf("{, does not count.
+bool ends_with_brace(std::string_view code) {
     std::size_t last = std::string_view::npos;
-    scan_code(line, [&](std::size_t i) {
-        if (line[i] != ' ' && line[i] != '\t') last = i;
+    bool comment = false;
+    scan_code(code, comment, [&](std::size_t i) {
+        if (code[i] != ' ' && code[i] != '\t') last = i;
     });
-    return last != std::string_view::npos && line[last] == '{';
+    return last != std::string_view::npos && code[last] == '{';
 }
 
-// Whether the byte at `offset` of `line` is code, not inside quotes or a // comment.
-bool is_code(std::string_view line, std::size_t offset) {
+// Whether the byte at `offset` of `line` is code, not inside quotes or a comment.
+bool is_code(std::string_view line, bool comment, std::size_t offset) {
     bool code = false;
-    scan_code(line, [&](std::size_t i) { code = code || i == offset; });
+    scan_code(line, comment, [&](std::size_t i) { code = code || i == offset; });
     return code;
 }
 
-bool opens_block(std::string_view line) { return ends_with_brace(line) || opens_statement(line); }
+bool opens_block(std::string_view code) { return ends_with_brace(code) || opens_statement(code); }
 
 }  // namespace
 
@@ -134,13 +159,13 @@ void Editor::replace(std::size_t from, std::size_t to, std::string_view with, bo
         apply(from, 0, with);
         undo_.back().state_after = state_ = next_state_++;
     } else {
-        Edit edit{from, text_.substr(from, to - from), std::string(with), caret_, anchor_, state_, next_state_++};
+        Edit edit{from, text_.substr(from, to - from), std::string(with), caret_, anchor_, 0, state_, next_state_++};
         apply(from, to - from, with);
         state_ = edit.state_after;
         undo_.push_back(std::move(edit));
     }
     typing_open_ = typing && with.find('\n') == std::string_view::npos;
-    caret_ = anchor_ = from + with.size();
+    caret_ = anchor_ = undo_.back().caret_after = from + with.size();
     has_preferred_column_ = false;
 }
 
@@ -149,19 +174,36 @@ std::string_view Editor::indentation(std::size_t line) const {
     return text.substr(0, std::min(text.find_first_not_of(" \t"), text.size()));
 }
 
+std::vector<bool> Editor::comment_starts(std::size_t last) const {
+    std::vector<bool> starts(last + 1, false);
+    bool comment = false;
+    for (std::size_t line = 0; line < last; ++line) {
+        scan_code(this->line(line), comment, [](std::size_t) {});
+        starts[line + 1] = comment;
+    }
+    return starts;
+}
+
 std::size_t Editor::statement_header(std::size_t line) const {
-    while (line-- > 0)
-        if (!trimmed(this->line(line)).empty()) return opens_statement(this->line(line)) ? line : npos;
+    const std::vector<bool> comments = comment_starts(line);
+    std::string buffer;
+    while (line-- > 0) {
+        bool comment = comments[line];
+        const std::string_view code = code_of(this->line(line), comment, buffer);
+        if (!code.empty()) return opens_statement(code) ? line : npos;
+    }
     return npos;
 }
 
 std::size_t Editor::opening_line(std::size_t offset) const {
     std::size_t depth = 0;
     std::string braces;
+    const std::vector<bool> comments = comment_starts(line_of(offset));
     for (std::size_t above = line_of(offset) + 1; above-- > 0;) {
         const std::string_view text = this->line(above).substr(0, offset - starts_[above]);
         braces.clear();
-        scan_code(text, [&](std::size_t i) {
+        bool comment = comments[above];
+        scan_code(text, comment, [&](std::size_t i) {
             if (text[i] == '{' || text[i] == '}') braces.push_back(text[i]);
         });
         for (auto brace = braces.rbegin(); brace != braces.rend(); ++brace)
@@ -175,7 +217,9 @@ void Editor::insert(std::string_view text) {
     const auto [from, to] = selection();
     const std::size_t line = line_of(from);
     const std::size_t start = starts_[line];
-    const bool blank_before = from == to && start + indentation(line).size() >= from;
+    // Text typed inside a comment stays where it is typed.
+    const bool blank_before = (text == "}" || text == "{") && from == to && start + indentation(line).size() >= from &&
+                              !comment_starts(line)[line];
     if (text == "}" && blank_before) {
         // A closing brace typed on a blank line lines up with the line of its opening brace.
         const std::size_t opening = opening_line(from);
@@ -196,8 +240,12 @@ void Editor::insert_newline() {
     const std::size_t line = line_of(from);
     const std::size_t start = starts_[line];
     const std::string_view before = std::string_view(text_).substr(start, from - start);
-    const std::string_view code = code_of(before);
-    const bool brace = ends_with_brace(before);
+    const std::size_t to_line = line_of(to);
+    const std::vector<bool> comments = comment_starts(to_line);
+    bool comment = comments[line];
+    std::string buffer;
+    const std::string_view code = code_of(before, comment, buffer);
+    const bool brace = ends_with_brace(code);
     std::string text = "\n";
     text += before.substr(0, std::min(before.find_first_not_of(" \t"), before.size()));
     // One level deeper after '{' or a control line; after the single statement under a control
@@ -211,16 +259,15 @@ void Editor::insert_newline() {
     }
     // A '}' after the caret goes to a line of its own, lined up with its '{'; between "{" and "}"
     // the caret gets the indented line in the middle.
-    const std::size_t to_line = line_of(to);
     std::size_t after = to;
     while (after < line_end(to_line) && (text_[after] == ' ' || text_[after] == '\t')) ++after;
-    if (after < line_end(to_line) && text_[after] == '}' && is_code(this->line(to_line), after - starts_[to_line])) {
+    if (after < line_end(to_line) && text_[after] == '}' && is_code(this->line(to_line), comments[to_line], after - starts_[to_line])) {
         const std::size_t opening = opening_line(after);
         if (opening != npos) {
             const std::string closing = "\n" + std::string(indentation(opening));
             if (!brace) return replace(from, after, closing, false);
             replace(from, after, text + closing, false);
-            caret_ = anchor_ = from + text.size();
+            caret_ = anchor_ = undo_.back().caret_after = from + text.size();
             return;
         }
     }
@@ -231,13 +278,19 @@ std::vector<std::vector<std::size_t>> Editor::indent_guides() const {
     std::vector<std::vector<std::size_t>> guides(starts_.size());
     std::vector<std::size_t> own(starts_.size(), npos);  // indentation column, npos on a blank line
     std::vector<std::size_t> open;                       // indentation of the enclosing block lines
+    bool comment = false;
+    std::string buffer;
     for (std::size_t line = 0; line < starts_.size(); ++line) {
         if (trimmed(this->line(line)).empty()) continue;
         own[line] = column_of(starts_[line] + indentation(line).size());
         while (!open.empty() && open.back() >= own[line]) open.pop_back();
         for (const std::size_t column : open)
             if (column > 0) guides[line].push_back(column);
-        if (opens_block(this->line(line))) open.push_back(own[line]);
+        // Most lines have no comment and need no copy without one.
+        const std::string_view text = this->line(line);
+        const bool opens = !comment && text.find('/') == std::string_view::npos ? opens_block(trimmed(text))
+                                                                                : opens_block(code_of(text, comment, buffer));
+        if (opens) open.push_back(own[line]);
     }
     // Blank lines, bottom up: each takes from the first non-blank line below it, up to the lesser
     // indentation of the lines around it.
@@ -318,7 +371,7 @@ bool Editor::redo() {
     Edit edit = std::move(redo_.back());
     redo_.pop_back();
     apply(edit.position, edit.removed.size(), edit.inserted);
-    caret_ = anchor_ = edit.position + edit.inserted.size();
+    caret_ = anchor_ = edit.caret_after;
     state_ = edit.state_after;
     undo_.push_back(std::move(edit));
     typing_open_ = has_preferred_column_ = false;

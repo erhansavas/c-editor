@@ -5,7 +5,9 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 
 namespace cedit {
 namespace {
@@ -41,16 +43,28 @@ std::optional<std::string> read_file(const std::string& path) {
     return bytes;
 }
 
+std::optional<FileStamp> file_stamp(const std::string& path) {
+    struct stat info {};
+    if (::stat(path.c_str(), &info) != 0) return std::nullopt;
+    return FileStamp{info.st_size, info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec, info.st_ino};
+}
+
 bool write_file_atomic(const std::string& path, std::string_view bytes) {
+    // Through a link to the file it names: the rename below would replace the link instead.
+    char resolved[PATH_MAX];
+    const std::string target = ::realpath(path.c_str(), resolved) ? resolved : path;
     mode_t mode = 0644;
     struct stat existing {};
-    if (::stat(path.c_str(), &existing) == 0) mode = existing.st_mode & 07777;
-    std::string temporary = path + ".cedit-XXXXXX";
+    if (::stat(target.c_str(), &existing) == 0) {
+        if (::access(target.c_str(), W_OK) != 0) return false;  // the rename would overwrite a read-only file
+        mode = existing.st_mode & 07777;
+    }
+    std::string temporary = target + ".cedit-XXXXXX";
     const int fd = ::mkstemp(temporary.data());
     if (fd < 0) return false;
     const bool ok = write_all(fd, bytes) && ::fchmod(fd, mode) == 0 && ::fsync(fd) == 0;
     ::close(fd);
-    if (!ok || std::rename(temporary.c_str(), path.c_str()) != 0) {
+    if (!ok || std::rename(temporary.c_str(), target.c_str()) != 0) {
         ::unlink(temporary.c_str());
         return false;
     }

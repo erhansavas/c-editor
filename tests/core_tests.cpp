@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "core/diagnostics.hpp"
 #include "core/editor.hpp"
@@ -22,6 +23,8 @@
 #include "posix/compile.hpp"
 #include "posix/files.hpp"
 #include "posix/process.hpp"
+
+using namespace std::string_literals;
 
 namespace {
 
@@ -59,7 +62,8 @@ void encoding_matches_system_iconv() {
             const auto back = cedit::encode(ours, cedit::Encoding::windows1254);
             CHECK(back && *back == std::string(in, 1));
         } else {
-            CHECK(ours == "\xEF\xBF\xBD");
+            const auto back = cedit::encode(ours, cedit::Encoding::windows1254);  // kept as the C1 control of that number, as Windows does
+            CHECK(ours != "\xEF\xBF\xBD" && back && *back == std::string(in, 1));
         }
     }
     iconv_close(converter);
@@ -173,7 +177,7 @@ void editing() {
     CHECK(back.line(0) == "int main() {x;");  // at column 0 it joins the lines as before
     back.set_caret(back.text().size(), false);
     back.delete_backward();
-    CHECK(back.line(1) == "    ");  // from the class's five spaces back to the level at four
+    CHECK(back.line(1) == "    ");  // from five spaces back to the level at four
     cedit::Editor gap("int main() {\n    x;\n    \n}");  // Backspace in front of '}' removes the blank line
     gap.set_caret(gap.line_start(3), false);
     gap.delete_backward();
@@ -193,7 +197,7 @@ void editing() {
     tabbed.set_caret(2, false);
     tabbed.delete_backward();
     CHECK(tabbed.text() == "\tx");  // a tab is a level of its own
-    cedit::Editor odd("    if (a) {\n     b;\n     ");  // the class's own five-space indentation
+    cedit::Editor odd("    if (a) {\n     b;\n     ");  // a five-space indentation
     odd.set_caret(odd.text().size(), false);
     odd.insert("}");
     CHECK(odd.text() == "    if (a) {\n     b;\n    }");
@@ -517,7 +521,8 @@ void plain_words() {
     CHECK(cedit::duration_text(0.234) == "0,23 sn");
     CHECK(cedit::describe_exit(W_EXITCODE(3, 0), 1.25) == "Program 1,25 sn içinde bitti, çıkış kodu 3.");
     CHECK(cedit::describe_exit(W_EXITCODE(0, SIGSEGV), 0.5) ==
-          "Program 0,50 sn sonra çöktü (segmentation fault).\r\nİzin verilmeyen bir bellek alanına erişti.");
+          "Program 0,50 sn sonra çöktü (segmentation fault).\r\nİzin verilmeyen bir bellek alanına erişti.\r\n"
+          "Örneğin scanf’te & unutulmuş ya da dizinin sınırı aşılmış olabilir.");
     CHECK(cedit::describe_exit(W_EXITCODE(0, SIGINT), 2) == "Program 2,00 sn sonra Control-C ile durduruldu.");
     CHECK(cedit::describe_exit(W_EXITCODE(0, SIGTERM), 1) == "Program 1,00 sn sonra 15 numaralı sinyalle durduruldu.");
 }
@@ -570,6 +575,204 @@ void compiles_cpp_program() {
     CHECK(result.ok && result.diagnostics.empty());
 }
 
+// Comments are not code: braces and control lines in them do not count, and a comment after a
+// control line does not hide it. /* ... */ runs over lines and apostrophes in it are not quotes.
+void comments_do_not_indent() {
+    const auto after_enter = [](const std::string& text) {
+        cedit::Editor editor(text);
+        editor.set_caret(text.size(), false);
+        editor.insert_newline();
+        return editor.text().substr(text.size());
+    };
+    CHECK(after_enter("/* yorum {") == "\n");
+    CHECK(after_enter("/*\n    if (a)") == "\n    ");  // inside a comment the indentation only stays
+    CHECK(after_enter("    if (a) /* yorum */") == "\n        ");
+    CHECK(after_enter("int main() { /* yorum */") == "\n    ");
+    CHECK(after_enter("/* don't */ int main() {") == "\n    ");
+    CHECK(after_enter("int a; /* { */") == "\n");
+    const auto after_brace = [](const std::string& text, std::string_view brace) {
+        cedit::Editor editor(text);
+        editor.set_caret(text.size(), false);
+        editor.insert(brace);
+        return editor.text().substr(text.rfind('\n') + 1);
+    };
+    CHECK(after_brace("int main() {\n    /* { */\n    ", "}") == "}");
+    CHECK(after_brace("int main() {\n    /*\n    {\n    */\n    ", "}") == "}");
+    CHECK(after_brace("int main() {\n    if (a) {\n        /* } */\n        ", "}") == "    }");
+    CHECK(after_brace("int main() {\n    /* don't */\n    ", "}") == "}");
+    CHECK(after_brace("int main() {\n    /*\n        ", "}") == "        }");  // text in a comment stays where it is typed
+    CHECK(after_brace("if (a) /* yorum */\n    ", "{") == "{");
+    cedit::Editor header("    if (a)\n        // yorum\n        b;");  // a comment line between does not end the statement
+    header.set_caret(header.text().size(), false);
+    header.insert_newline();
+    CHECK(header.text().ends_with("b;\n    "));
+    cedit::Editor before("int main() {\n    /* } */");  // Enter in front of a '}' in a comment only splits
+    before.set_caret(before.line_start(1) + 7, false);
+    before.insert_newline();
+    CHECK(before.text() == "int main() {\n    /* \n    } */");
+    const auto guides = cedit::Editor("/*\n  if (a)\n    x\n*/\nif (b) /* y */\n    c;").indent_guides();
+    CHECK(guides[2].empty() && guides[5].empty());  // column 0 is left out; nothing opens inside the comment
+    CHECK(cedit::Editor("/*\n    if (a)\n        x\n*/").indent_guides()[2].empty());
+}
+
+void redo_returns_the_caret() {
+    cedit::Editor pair("int main() {}");
+    pair.set_caret(12, false);
+    pair.insert_newline();
+    const std::size_t caret = pair.caret();
+    pair.undo();
+    pair.redo();
+    CHECK(pair.caret() == caret && pair.caret() == pair.line_end(1));
+    cedit::Editor history("a");
+    CHECK(!history.can_undo() && !history.can_redo());
+    history.insert("ş");
+    CHECK(history.can_undo() && !history.can_redo());
+    history.undo();
+    CHECK(!history.can_undo() && history.can_redo());
+}
+
+// What was read is what is written, whatever the bytes are.
+void every_byte_round_trips() {
+    const auto exact = [](const std::string& bytes) {
+        const cedit::LoadedText loaded = cedit::load_text(bytes);
+        const auto stored = cedit::store_text(loaded.text, loaded.format);
+        return stored && *stored == bytes;
+    };
+    std::string all;
+    for (int value = 0; value < 256; ++value) all.push_back(static_cast<char>(value));
+    CHECK(exact(all));
+    CHECK(exact("a\x81\x8D\x8E\x8F\x90\x9D\x9E\n"));          // the bytes Windows-1254 leaves undefined
+    CHECK(exact("\xEF\xBB\xBF\xC5\x9F \xFF\n"));              // a BOM over invalid UTF-8
+    CHECK(exact("\xFF\xFEi\0n\0"s) && exact("a\0b\r\n"s));    // UTF-16 and NUL bytes
+    CHECK(exact("\xEF\xBB\xBFint \xC5\x9F;\r\n") && exact("a\r\nb\r\n") && exact("a\nb\n") && exact("a\rb\n") && exact(""));
+    CHECK(cedit::load_text("\xEF\xBB\xBF\xC5\x9F \xFF\n").format.encoding == cedit::Encoding::windows1254);
+    // Mixed line ends cannot round trip: the editor says so, and the larger part decides.
+    const cedit::LoadedText mixed = cedit::load_text("a\nb\nc\r\n");
+    CHECK(mixed.mixed_line_ends && !mixed.format.crlf && mixed.text == "a\nb\nc\n");
+    const cedit::LoadedText mostly_crlf = cedit::load_text("a\r\nb\r\nc\n");
+    CHECK(mostly_crlf.mixed_line_ends && mostly_crlf.format.crlf);
+    CHECK(!cedit::load_text("a\r\nb\r\n").mixed_line_ends && !cedit::load_text("a\nb\n").mixed_line_ends);
+}
+
+void terminal_controls() {
+    const auto show = [](std::string_view bytes) {
+        cedit::Terminal terminal;
+        terminal.feed(bytes);
+        std::string out;
+        for (const auto& line : terminal.lines()) out += utf8_of(line) + "|";
+        return out;
+    };
+    CHECK(show("abc\x1B[2K") == "|");
+    CHECK(show("abcd\x1B[2D\x1B[1K") == "   d|");
+    CHECK(show("abcd\x1B[2D\x1B[K") == "ab|");
+    CHECK(show("ab\ncd\x1B[A\x1B[J") == "ab|");
+    CHECK(show("ab\ncd\x1B[1J") == "|  |");
+    CHECK(show("a\x1B]0;title\ab") == "ab|");            // a window title is not text, nor its end a bell
+    CHECK(show("a\x1B]0;title\x1B\\b") == "ab|");
+    CHECK(show("a\x1B(Bb") == "ab|");                    // a character-set choice
+    cedit::Terminal title;
+    title.feed("\x1B]0;title\a");
+    CHECK(title.bells() == 0);
+
+    cedit::Terminal screen;  // positions count from the top of the 25 rows on screen, not of the scrollback
+    for (int i = 0; i < 40; ++i) screen.feed(std::to_string(i) + "\n");
+    screen.feed("\x1B[1;1HX");
+    CHECK(screen.lines().size() == 41 && screen.cursor_line() == 41 - cedit::Terminal::rows);
+    CHECK(utf8_of(screen.lines()[screen.cursor_line()]).starts_with("X"));
+    screen.feed("\x1B[999;1HY");
+    CHECK(screen.cursor_line() == 40 && screen.lines().size() == 41);
+
+    cedit::Terminal endless;  // an endless escape sequence takes no endless memory, and ends like any other
+    endless.feed("\x1B[");
+    for (int i = 0; i < 1000; ++i) endless.feed(std::string(1000, '1'));
+    endless.feed("mok");
+    CHECK(utf8_of(endless.lines()[0]) == "ok");
+}
+
+// Saving never overwrites what it may not, and leaves a link pointing at the file it names.
+void saving_respects_the_file() {
+    const std::string read_only = scratch_dir + "/salt_okunur.c";
+    CHECK(cedit::write_file_atomic(read_only, "ilk"));
+    CHECK(::chmod(read_only.c_str(), 0444) == 0);
+    CHECK(!cedit::write_file_atomic(read_only, "ikinci"));
+    CHECK(cedit::read_file(read_only).value_or("") == "ilk");
+    CHECK(::chmod(read_only.c_str(), 0644) == 0);
+
+    const std::string target = scratch_dir + "/hedef.c";
+    const std::string link = scratch_dir + "/bag.c";
+    ::unlink(link.c_str());
+    CHECK(cedit::write_file_atomic(target, "ilk") && ::symlink("hedef.c", link.c_str()) == 0);
+    CHECK(cedit::write_file_atomic(link, "ikinci"));
+    struct stat info {};
+    CHECK(::lstat(link.c_str(), &info) == 0 && S_ISLNK(info.st_mode));
+    CHECK(cedit::read_file(target).value_or("") == "ikinci");
+
+    const auto first = cedit::file_stamp(target);
+    CHECK(first && first == cedit::file_stamp(target));
+    CHECK(cedit::write_file_atomic(target, "ucuncu!") && first != cedit::file_stamp(target));
+    CHECK(!cedit::file_stamp(scratch_dir + "/olmayan.c"));
+}
+
+// A Turkish letter is one character to Backspace: the program never receives half of it.
+void backspace_takes_a_whole_letter() {
+    auto console = start(build("harf.c", "#include <stdio.h>\nint main() {\n    int c;\n    while ((c = getchar()) != '\\n') printf(\"[%02X]\", c);\n"
+                                         "    puts(\"son\");\n    return 0;\n}\n"));
+    CHECK(console.has_value());
+    if (!console) return;
+    console->type("\xC5\x9F\x7F" "a\r");
+    CHECK(console->read_until("son"));
+    CHECK(console->shown.find("[61]son") != std::string::npos && console->shown.find("[C5]") == std::string::npos);
+    CHECK(console->finish() == 0);
+}
+
+// The compiler sees the writer's lines as they are, so warnings that compare lines still come.
+void warns_about_empty_bodies() {
+    const cedit::CompileResult result = build(
+        "bos.c", "#include <stdio.h>\nint main() {\n    int a = 1;\n    if (a == 2);\n    {\n        a = 3;\n    }\n"
+                 "    for (int i = 0; i < 3; i++);\n        a++;\n    while (a < 3);\n        a++;\n    return a;\n}\n");
+    CHECK(result.ok && result.diagnostics.size() == 3);
+    CHECK(result.log.find("  ➜ if satırının sonunda fazladan noktalı virgül (;) var") != std::string::npos);
+    CHECK(result.log.find("  ➜ Döngü satırının sonunda fazladan noktalı virgül (;) var") != std::string::npos);
+    if (result.diagnostics.size() == 3) CHECK(result.diagnostics[0].line == 3 && result.diagnostics[1].line == 7 && result.diagnostics[2].line == 9);
+}
+
+// Names reach the compiler as one argument: nothing in them is ever read as a command or an option.
+void odd_file_names() {
+    const std::string hello = "int main(void) { return 0; }\n";
+    for (const char* name : {"boşluklu ödev 1.c", "a\"b.c", "a'b$(touch kanit).c", "a;b`touch kanit`.c", "-dash.c", "back\\slash.c"}) {
+        const cedit::CompileResult result = build(name, hello);
+        CHECK(result.ok);
+        const cedit::CompileResult broken = build(name, "int main(void) { return 0 }\n", false);
+        CHECK(!broken.ok && broken.diagnostics.size() == 1 && broken.log.find("“;” yazılmalı.") != std::string::npos);
+    }
+    CHECK(::access((scratch_dir + "/work/kanit").c_str(), F_OK) != 0 && ::access("kanit", F_OK) != 0);
+    const std::string cpp = "#include <iostream>\nint main() { std::cout << 1; }\n";
+    for (const char* name : {"ODEV.CPP", "x.c++", "y.cp", "Z.Cc"}) CHECK(build(name, cpp).ok);
+}
+
+void hints_for_common_slips() {
+    const auto log_of = [](const std::string& code) { return build("slip.c", code, false).log; };
+    const std::string quotes = log_of("#include <stdio.h>\nint main() {\n    printf(“a”);\n    return 0;\n}\n");
+    CHECK(quotes.find("  ➜ Bu tırnak işareti C’de geçmez") != std::string::npos && quotes.find("silinmeli") == std::string::npos);
+    CHECK(log_of("#include <stdoi.h>\nint main() { return 0; }\n").find("  ➜ “stdoi.h” adında bir başlık dosyası bulunamadı") != std::string::npos);
+    CHECK(log_of("int main() {\n    return 0;\n}\nprintf(\"a\");\n").find("  ➜ Bu satır fonksiyonun dışında kalmış") != std::string::npos);
+    CHECK(log_of("int main() {\n    int a = 1;\n    1 = a;\n    return a;\n}\n").find("  ➜ = işaretinin solunda") != std::string::npos);
+    CHECK(log_of("int main() {\n    const int a = 1;\n    a = 2;\n    return a;\n}\n").find("  ➜ “a” const tanımlanmış") != std::string::npos);
+    CHECK(log_of("int main() {\n    break;\n}\n").find("  ➜ break yalnızca") != std::string::npos);
+    CHECK(cedit::explain("non-void function 'f' should return a value", "").starts_with("Bu fonksiyon değer döndürmeli"));
+    CHECK(cedit::describe_exit(W_EXITCODE(0, SIGABRT), 1).find("tuttu") == std::string::npos);
+
+    // A failed link has no error line of its own: the caret goes to the call the linker cannot find.
+    const cedit::CompileResult typo = build("yazim.c", "#include <stdio.h>\nint main() {\n    int a = 1;\n    prinf(\"%d\", a);\n    return 0;\n}\n", false);
+    const cedit::Diagnostic* place = cedit::first_problem(typo.diagnostics);
+    CHECK(place != nullptr && place->line == 3);
+    const cedit::CompileResult both = build("iki.c", "int main() {\n    unused();\n    return x;\n}\n", false);
+    place = cedit::first_problem(both.diagnostics);
+    CHECK(place != nullptr && place->error && place->line == 2);
+    const std::vector<cedit::Diagnostic> only_warning = {{4, 0, false, "unused variable 'a'", std::nullopt}};
+    CHECK(cedit::first_problem(only_warning) == nullptr);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -586,7 +789,16 @@ int main(int argc, char** argv) {
     highlighting();
     terminal();
     diagnostics();
+    comments_do_not_indent();
+    redo_returns_the_caret();
+    every_byte_round_trips();
+    terminal_controls();
+    saving_respects_the_file();
     compiles_and_runs_windows_program();
+    backspace_takes_a_whole_letter();
+    warns_about_empty_bodies();
+    odd_file_names();
+    hints_for_common_slips();
     runs_windows_habits();
     compiles_cpp_program();
     plain_words();

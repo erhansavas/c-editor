@@ -46,21 +46,33 @@ std::size_t Terminal::parameter(std::size_t index, std::size_t fallback) const {
     return error != std::errc{} || end == rest.data() || value == 0 ? fallback : value;
 }
 
-// Cursor positions stay on the screen width and within the scrollback, whatever a program asks for.
+// Erases to the end of the line (mode 0), up to and including the cursor (1) or the whole line (2).
+void Terminal::erase_line(std::size_t mode) {
+    std::u32string& line = lines_[line_];
+    if (mode == 0 && line.size() > column_) line.resize(column_);
+    if (mode == 1) std::fill_n(line.begin(), std::min(column_ + 1, line.size()), U' ');
+    if (mode >= 2) line.clear();
+}
+
+// Cursor positions stay on the screen, whatever a program asks for.
 void Terminal::control_sequence(char final_byte) {
     switch (final_byte) {
     case 'J':
-        if (parameter(0, 0) >= 2) clear();
+        if (parameter(0, 0) >= 2) {
+            clear();
+        } else {
+            erase_line(parameter(0, 0));
+            if (parameter(0, 0) == 0) lines_.resize(line_ + 1);
+            else for (std::size_t line = line_ - std::min(line_, rows - 1); line < line_; ++line) lines_[line].clear();
+        }
         break;
     case 'H':
     case 'f':
-        line_ = std::min(parameter(0, 1), max_lines) - 1;
+        line_ = (lines_.size() > rows ? lines_.size() - rows : 0) + std::min(parameter(0, 1), rows) - 1;
         column_ = std::min(parameter(1, 1), columns) - 1;
         while (lines_.size() <= line_) lines_.emplace_back();
         break;
-    case 'K':
-        if (lines_[line_].size() > column_) lines_[line_].resize(column_);
-        break;
+    case 'K': erase_line(parameter(0, 0)); break;
     case 'A': line_ -= std::min(line_, parameter(0, 1)); break;
     case 'B':
         for (std::size_t n = std::min(parameter(0, 1), max_lines); n > 0; --n) line_feed();
@@ -81,8 +93,15 @@ void Terminal::feed(std::string_view bytes) {
     while (offset < text.size()) {
         const auto byte = static_cast<unsigned char>(text[offset]);
         if (state_ == State::escape) {
-            state_ = byte == '[' ? State::csi : State::ground;
+            // ESC [ and ESC ] open longer sequences; 0x20-0x2F, as in ESC ( B, wait for one more byte.
+            state_ = byte == '[' ? State::csi : byte == ']' ? State::osc : byte >= 0x20 && byte <= 0x2F ? State::escape : State::ground;
             if (state_ == State::csi) parameters_.clear();
+            ++offset;
+            continue;
+        }
+        if (state_ == State::osc) {  // text for the terminal, such as a window title, up to BEL or ESC and a final byte
+            if (byte == 0x07) state_ = State::ground;
+            if (byte == 0x1B) state_ = State::escape;
             ++offset;
             continue;
         }
@@ -90,7 +109,7 @@ void Terminal::feed(std::string_view bytes) {
             if (byte >= 0x40 && byte <= 0x7E) {
                 state_ = State::ground;
                 control_sequence(static_cast<char>(byte));
-            } else {
+            } else if (parameters_.size() < max_parameters) {
                 parameters_.push_back(static_cast<char>(byte));
             }
             ++offset;

@@ -1,6 +1,5 @@
 // Composition root: the application, its menus and the set of open documents.
 #import <AppKit/AppKit.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "DocumentWindow.h"
 
@@ -36,11 +35,15 @@
     [document.window makeKeyAndOrderFront:nil];
 }
 
+- (CEDocumentWindow*)documentAt:(NSString*)path {
+    for (CEDocumentWindow* document in _documents)
+        if ([document.path isEqualToString:path]) return document;
+    return nil;
+}
+
 - (void)openPath:(NSString*)path {
     path = path.stringByStandardizingPath;
-    for (CEDocumentWindow* document in _documents) {
-        if ([document.path isEqualToString:path]) return [document.window makeKeyAndOrderFront:nil];
-    }
+    if (CEDocumentWindow* open = [self documentAt:path]) return [open.window makeKeyAndOrderFront:nil];
     CEDocumentWindow* opened = [CEDocumentWindow openPath:path];
     if (!opened) return;
     CEDocumentWindow* pristine = nil;
@@ -82,6 +85,11 @@
     return NSTerminateNow;
 }
 
+- (void)applicationWillTerminate:(NSNotification*)notification {
+    (void)notification;
+    for (CEDocumentWindow* document in _documents) [document endWork];
+}
+
 #pragma mark - File menu
 
 - (void)newDocument:(id)sender {
@@ -97,7 +105,7 @@
 - (void)openDocument:(id)sender {
     (void)sender;
     NSOpenPanel* panel = [NSOpenPanel openPanel];
-    panel.allowedContentTypes = @[ UTTypeCSource, UTTypeCHeader, UTTypeCPlusPlusSource, UTTypeCPlusPlusHeader ];
+    panel.allowedContentTypes = source_types();
     panel.allowsMultipleSelection = YES;
     if ([panel runModal] != NSModalResponseOK) return;
     for (NSURL* url in panel.URLs) [self openPath:url.path];
@@ -107,7 +115,8 @@
     (void)sender;
     while (NSString* path = _closedPaths.lastObject) {
         [_closedPaths removeLastObject];
-        if ([NSFileManager.defaultManager fileExistsAtPath:path]) return [self openPath:path];
+        if ([self documentAt:path] || ![NSFileManager.defaultManager fileExistsAtPath:path]) continue;
+        return [self openPath:path];
     }
 }
 

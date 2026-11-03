@@ -24,10 +24,12 @@ constexpr FileFormat windows_turkish{.encoding = Encoding::windows1254, .crlf = 
 struct LoadedText {
     std::string text;
     FileFormat format;
+    bool mixed_line_ends = false;  // both CRLF and LF: storing makes them all `format.crlf`
 };
 
-// UTF-8 with a BOM or with non-ASCII text loads as UTF-8; any other bytes are Windows-1254, the code
-// page of Turkish Windows. Plain ASCII reads the same in both, so it loads as Windows-1254 too.
+// Valid UTF-8 with a BOM or with non-ASCII text loads as UTF-8; anything else is Windows-1254, the code
+// page of Turkish Windows, in which every byte has a character and survives a round trip. Plain ASCII
+// reads the same in both, so it loads as Windows-1254 too.
 LoadedText load_text(std::string_view bytes);
 
 // Error value: byte offset in `text` of the first character the encoding cannot represent.
