@@ -36,14 +36,14 @@ yaptığınızda nerede olduğunu ve satırın ne olması gerektiğini söyler; 
 C Editor macOS 27 yüklü Apple silicon (M1 ve sonrası) Mac’lerde çalışır. Şu an beta aşamasındadır: günlük
 kullanıma hazırdır, ama 1.0’a kadar davranışı değişebilir.
 
-1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.3-macOS-arm64.dmg`
+1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.4-macOS-arm64.dmg`
    dosyasını indirin, açın ve **C Editor**’ü **Applications** (Uygulamalar) klasörüne sürükleyin.
 2. Uygulama Apple onaylı (notarize) olmadığı için macOS ilk açılışı engeller: **Sistem Ayarları › Gizlilik ve
    Güvenlik**’e gidip **Yine de Aç**’ı seçin.
 3. Programları derlemek için Apple’ın ücretsiz Komut Satırı Araçları gerekir. Kurulu değilse ⌘R’ye ilk
    bastığınızda C Editor bunu söyler; **Kur**’a tıklamanız yeterli.
 
-İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.3-macOS-arm64.dmg.sha256`
+İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.4-macOS-arm64.dmg.sha256`
 
 ## Kullanım
 

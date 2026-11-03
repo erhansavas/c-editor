@@ -400,7 +400,9 @@ NSArray<UTType*>* source_types() {
 
 #pragma mark - Saving
 
-- (BOOL)writeTo:(NSString*)path {
+- (BOOL)writeTo:(NSString*)requested {
+    // A name in its composed form, as Windows and everything else expects: fileSystemRepresentation would split "ö" in two.
+    NSString* path = requested.precomposedStringWithCanonicalMapping;
     if (_mixedLineEnds &&
         ask([NSString stringWithFormat:@"“%@” dosyasında Windows ve Mac satır sonları karışık.", path.lastPathComponent],
             [NSString stringWithFormat:@"Kaydedince hepsi %s olur.", _format.crlf ? "CRLF (Windows)" : "LF (macOS)"],
@@ -418,7 +420,7 @@ NSArray<UTType*>* source_types() {
         [_editorView goToLine:line column:offset - _editor->line_start(line)];
         return NO;
     }
-    if (!cedit::write_file_atomic(path.fileSystemRepresentation, *bytes)) {
+    if (!cedit::write_file_atomic(path.UTF8String, *bytes)) {
         alert([NSString stringWithFormat:@"“%@” kaydedilemedi.", path.lastPathComponent], path);
         return NO;
     }

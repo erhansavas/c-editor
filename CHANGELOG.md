@@ -1,5 +1,9 @@
 # Değişiklikler
 
+## 0.5.4 — 3 Kasım 2026
+
+- Türkçe harfli dosya adları (`ödev.cpp`) birleşik biçimde kaydediliyor; Windows’a ve başka bilgisayarlara gönderilince adları bozuk görünmüyor.
+
 ## 0.5.3 — 3 Kasım 2026
 
 Windows’ta yazılan kod için düzeltmeler ve eksik fonksiyonlar.
