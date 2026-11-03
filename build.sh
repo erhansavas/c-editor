@@ -15,6 +15,7 @@ for arg in "$@"; do
 done
 readonly sdk="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
 readonly cxx="$(/usr/bin/xcrun -f clang++)"
+readonly cc="$(/usr/bin/xcrun -f clang)"
 readonly common=(-isysroot "$sdk" -arch arm64 -mmacosx-version-min=27.0 -std=c++23 -fno-exceptions -fno-rtti
     -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -Isrc)
 readonly checked=(-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
@@ -39,11 +40,20 @@ compile_link() {
     "$cxx" "${common[@]}" "${flags[@]}" "${objects[@]}" "$@" -o "$output"
 }
 
+# The compat headers and, beside them, the runtime every compiled program links; never sanitized, as a user's program is not.
+install_compat() {
+    rm -rf "$1"
+    /usr/bin/ditto resources/compat "$1"
+    "$cc" -isysroot "$sdk" -arch arm64 -mmacosx-version-min=27.0 -std=gnu11 -O2 -fno-builtin -D_FORTIFY_SOURCE=0 \
+        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -c src/runtime/windows_runtime.c -o "$1/windows_runtime.o"
+}
+
 if [[ $config == test ]]; then
     flags=("${checked[@]}")
     compile_link "$out/core_tests" "${portable[@]}" tests/core_tests.cpp -- -liconv
     mkdir -p build/tmp
-    exec "$out/core_tests" "${PWD}/resources/compat" "${PWD}/build/tmp"
+    install_compat "$out/compat"
+    exec "$out/core_tests" "${PWD}/$out/compat" "${PWD}/build/tmp"
 fi
 
 case $config in
@@ -57,7 +67,7 @@ compile_link "$app/Contents/MacOS/c-editor" "${portable[@]}" src/platform/macos/
     -framework AppKit -framework CoreText -framework UniformTypeIdentifiers
 cp resources/Info.plist "$app/Contents/Info.plist"
 cp resources/CSource.icns "$app/Contents/Resources/CSource.icns"
-/usr/bin/ditto resources/compat "$app/Contents/Resources/compat"
+install_compat "$app/Contents/Resources/compat"
 # Absolute paths: actool hands the work to a helper that may still sit in another project's folder.
 /usr/bin/xcrun actool "$PWD/resources/AppIcon.icon" --compile "$PWD/$app/Contents/Resources" --platform macosx \
     --minimum-deployment-target 27.0 --app-icon AppIcon --output-partial-info-plist "$PWD/$out/icon-info.plist" >/dev/null

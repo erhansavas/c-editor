@@ -773,6 +773,83 @@ void hints_for_common_slips() {
     CHECK(cedit::first_problem(only_warning) == nullptr);
 }
 
+bool has(std::string_view text, std::string_view wanted) { return text.find(wanted) != std::string_view::npos; }
+
+// What a program shows and how it ends, typed keys sent only once it runs.
+std::pair<std::string, int> run(const std::string& name, const std::string& code) {
+    std::optional<Console> console = start(build(name, code));
+    if (!console) return {"", -1};
+    const int exit_code = console->finish();
+    return {console->shown, exit_code};
+}
+
+// Code written on Windows, and a beginner's own names the system would otherwise clash with.
+void windows_code() {
+    const std::string head = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\nint main(void) {\n";
+    const auto [text, text_end] = run("metin.c", head + R"(char a[] = "abc", b[] = "kIl", c[] = "KiL", d[] = "abcd", n[70];
+        printf("%s %s %s %s|", strrev(a), strupr(b), strlwr(c), strnset(d, 'y', 2)); printf("%s|%d %d %d|", strset(d, 'x'), stricmp("A", "a"), strnicmp("ab", "AC", 1), memicmp("Ab", "aC", 2) < 0);
+        printf("%s|", itoa(255, n, 16)); printf("%s|", itoa(-5, n, 10)); printf("%s|", itoa(-1, n, 16)); printf("%s|", lltoa(-5000000000LL, n, 10)); printf("%s\n", ulltoa(255ULL, n, 2)); return 0; }
+)");
+    CHECK(text_end == 0 && has(text, "cba KIL kil yycd|xxxx|0 0 1|ff|-5|ffffffff|-5000000000|11111111"));
+
+    // A program's own functions win, and may have the names of what the runtime uses underneath.
+    const auto [own, own_end] = run("kendi.c", "#include <stdio.h>\n#include <stdlib.h>\nchar *strrev(char *s) { s[0] = 'K'; return s; }\nint read(void) { return 1; }\nint close(void) { return 2; }\nint write(int a) { return a; }\n"
+        "int main(void) { char a[] = \"abc\"; printf(\"%s %d\\n\", strrev(a), read() + close() + write(5)); system(\"cls\"); printf(\"son\"); return 0; }\n");
+    CHECK(own_end == 0 && has(own, "son"));
+    CHECK(build("sirala.c", "#include <stdlib.h>\nint mergesort(int *a, int n) { return n + a[0]; }\nint main(void) { int a[1] = {0}; return mergesort(a, 0); }\n").ok);
+    CHECK(build("kr.c", "#include <stdio.h>\nint getline(char s[], int lim) { s[0] = 0; return lim; }\nint main(void) { char b[2]; return getline(b, 0); }\n").ok);
+    CHECK(build("indeks.c", "#include <string.h>\nint index = 3;\nint main(void) { return index - 3; }\n").ok);
+    CHECK(build("rastgele.c", "#include <stdlib.h>\nint random(int a, int b) { return a + b; }\nint main(void) { return random(0, 0); }\n").ok);
+    CHECK(build("kendi2.c", "int read(void) { return 0; }\nint main(void) { return read(); }\n").ok);
+    // The same names remain the system's where a program means those.
+    const auto [posix, posix_end] = run("posix.c", "#include <stdio.h>\nint main(void) { printf(\"%d\", random() >= 0); return 0; }\n");
+    CHECK(posix_end == 0 && has(posix, "1"));
+    // Text shows at once, so a crash does not lose it; division by zero stops the program and says why; doubles do not stop.
+    const auto [zero, zero_end] = run("sifir.c", "#include <stdio.h>\nint main(void) {\n    int a = 5, b = 0;\n    printf(\"once\");\n    printf(\"%d\", a / b);\n    printf(\"sonra\");\n    return 0;\n}\n");
+    CHECK(zero_end == 128 + SIGTRAP && has(zero, "once") && !has(zero, "sonra"));
+    CHECK(has(cedit::describe_exit(W_EXITCODE(0, SIGTRAP), 1), "Bir tam sayı sıfıra bölündü"));
+    CHECK(run("kalan.c", "#include <stdio.h>\nint main(void) {\n    int a = 5, b = 0;\n    printf(\"%d\", a % b);\n    return 0;\n}\n").second == 128 + SIGTRAP);
+    CHECK(run("ondalik.c", "#include <stdio.h>\nint main(void) {\n    double a = 5, b = 0;\n    printf(\"%f\", a / b);\n    return 0;\n}\n").second == 0);
+    // A local never set does not read as a 0 that looks right.
+    CHECK(has(run("deger.c", "#include <stdio.h>\nint main(void) {\n    int a[2];\n    printf(\"%x\", a[1]);\n    return 0;\n}\n").first, "aaaaaaaa"));
+    // Headers and <windows.h> calls that Windows code names.
+    CHECK(build("basliklar.c", "#include <malloc.h>\n#include <io.h>\n#include <process.h>\n#include <direct.h>\n#include <dos.h>\nint main(void) { return mkdir(\"build_tmp_yok/x\") == 0; }\n").ok);
+    const auto [windows, windows_end] = run("pencere.cpp", "#include <windows.h>\n#include <stdio.h>\nint main() {\n    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);\n    SetConsoleTextAttribute(h, FOREGROUND_RED);\n    Beep(440, 1);\n    Sleep(1);\n"
+        "    COORD c = {2, 1};\n    SetConsoleCursorPosition(h, c);\n    printf(\"%d %d\", (int)sizeof(DWORD), (int)strlen(\"ab\"));\n    return 0;\n}\n");
+    CHECK(windows_end == 0 && has(windows, "4 2"));
+    const auto [cpp_std, cpp_end] = run("std.cpp", "#include <cstdlib>\n#include <cstdio>\n#include <clocale>\nint main() {\n    std::setlocale(LC_ALL, \"Turkish\");\n    std::fflush(stdin);\n    std::system(\"cls\");\n    std::printf(\"tamam\");\n    return 0;\n}\n");
+    CHECK(cpp_end == 0 && has(cpp_std, "tamam"));
+    CHECK(has(build("yok.cpp", "int main() {\n    cout << 1;\n    return 0;\n}\n", false).log, "#include <iostream> satırı eksik"));
+
+    // Keys read as on Windows; ungetch keeps one; cgets edits and stops; cscanf leaves the key that ended the field.
+    std::optional<Console> keys = start(build("tus.c", "#include <stdio.h>\n#include <conio.h>\nint main(void) {\n    int i, a = 0, r;\n    char line[8] = {4};\n    r = ungetch('q'); printf(\"%c %d|\", r, ungetch('z')); printf(\"%d %c|\", kbhit() != 0, getch()); cputs(\"yaz\"); cprintf(\"%d\\n\", 7);\n    printf(\"hazir\");\n"
+        "    for (i = 0; i < 5; i++) { printf(\"[%d]\", getch()); fflush(stdout); }\n    printf(\"satir\");\n    printf(\"<%s %d>\", cgets(line), line[1]);\n    printf(\"sayi\");\n    r = cscanf(\"%d\", &a);\n    printf(\"<%d %d %d>\", r, a, getch());\n    return 0;\n}\n"));
+    if (keys) {
+        CHECK(keys->read_until("hazir"));
+        CHECK(has(keys->shown, "q -1|1 q|yaz7"));
+        ::usleep(100'000);
+        keys->type("\x1B[A");
+        CHECK(keys->read_until("[224][72]"));
+        ::usleep(50'000);
+        keys->type("\r");
+        CHECK(keys->read_until("[13]"));
+        ::usleep(50'000);
+        keys->type("\x7F");
+        CHECK(keys->read_until("[8]"));
+        ::usleep(50'000);
+        keys->type("\x03");  // a key to getch, not an end to the program
+        CHECK(keys->read_until("[3]satir"));
+        ::usleep(100'000);
+        keys->type("ab\x7F" "c\r");
+        CHECK(keys->read_until("<ac 2>"));
+        CHECK(keys->read_until("sayi"));
+        ::usleep(100'000);
+        keys->type("42\r");
+        CHECK(keys->read_until("<1 42 13>"));
+        keys->finish();
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -804,6 +881,7 @@ int main(int argc, char** argv) {
     plain_words();
     explains_mistakes();
     finds_own_headers();
+    windows_code();
     finds_developer_tools();
     std::printf(failures ? "core_tests: %d FAILED\n" : "core_tests: all passed\n", failures);
     return failures ? 1 : 0;

@@ -103,14 +103,21 @@ CompileResult compile(const CompileRequest& request) {
         "-O0", "-Wall", "-Wno-deprecated-declarations", "-fno-color-diagnostics", "-fdiagnostics-parseable-fixits",
         // A // comment ending in a backslash, common in escape-sequence lessons; the editor shows the joined line as comment.
         "-Wno-comment",
+        // A global `index` is an ordinary name on Windows, whichever headers are read.
+        "-fno-builtin-index", "-fno-builtin-rindex",
+        // Integer division by zero stops a program on most computers; on Apple silicon only this makes it stop.
+        "-fsanitize=integer-divide-by-zero", "-fsanitize-trap=integer-divide-by-zero",
+        // A local never set holds a pattern that reads as nonsense, not a 0 that looks right.
+        "-ftrivial-auto-var-init=pattern",
         // GCC on Windows only warns about these old habits, e.g. `main()` or a missing #include.
         "-Wno-error=implicit-int", "-Wno-error=implicit-function-declaration", "-Wno-error=int-conversion",
         "-Wno-error=incompatible-function-pointer-types", "-Wno-error=return-mismatch",
         "-iquote", request.source_path.substr(0, request.source_path.rfind('/')),  // #include "own.h" beside it
-        "-I", request.compat_dir,
+        "-isystem", request.compat_dir,
         "-include", request.compat_dir + "/cedit_compat.h",
-        "-o", result.binary, "-lm",
+        "-o", result.binary,
         argument,
+        "-x", "none", request.compat_dir + "/windows_runtime.o", "-lm",
     };
     const auto started = std::chrono::steady_clock::now();
     std::optional<Captured> captured = run_capture(argv, request.work_dir);

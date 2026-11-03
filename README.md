@@ -36,14 +36,14 @@ yaptığınızda nerede olduğunu ve satırın ne olması gerektiğini söyler; 
 C Editor macOS 27 yüklü Apple silicon (M1 ve sonrası) Mac’lerde çalışır. Şu an beta aşamasındadır: günlük
 kullanıma hazırdır, ama 1.0’a kadar davranışı değişebilir.
 
-1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.2-macOS-arm64.dmg`
+1. [Sürümler](https://github.com/erhansavas/c-editor/releases) sayfasından `C-Editor-0.5.3-macOS-arm64.dmg`
    dosyasını indirin, açın ve **C Editor**’ü **Applications** (Uygulamalar) klasörüne sürükleyin.
 2. Uygulama Apple onaylı (notarize) olmadığı için macOS ilk açılışı engeller: **Sistem Ayarları › Gizlilik ve
    Güvenlik**’e gidip **Yine de Aç**’ı seçin.
 3. Programları derlemek için Apple’ın ücretsiz Komut Satırı Araçları gerekir. Kurulu değilse ⌘R’ye ilk
    bastığınızda C Editor bunu söyler; **Kur**’a tıklamanız yeterli.
 
-İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.2-macOS-arm64.dmg.sha256`
+İndirdiğiniz dosyayı doğrulamak için: `shasum -a 256 -c C-Editor-0.5.3-macOS-arm64.dmg.sha256`
 
 ## Kullanım
 
@@ -71,7 +71,8 @@ boşlukla yardım eder, kodu sizin yerinize yazmaz:
 
 Hatalı satırlar işaretlenir ve imleç ilk hataya, derleyicinin bulamadığı bir fonksiyon adında ise o çağrıya gider. Derleyicinin mesajları terimleri tanıyın diye İngilizce
 kalır; altlarında Türkçe açıklaması çıkar. Mesaja tıklayınca o satıra gidilir. Program çalışırken çökerse konsol
-ne olduğunu (ör. segmentation fault) ve nedenini Türkçe söyler.
+ne olduğunu (ör. segmentation fault) ve nedenini Türkçe söyler; tam sayıyı sıfıra bölmek de programı durdurur. Çökmeden önce
+yazdırılan her şey ekranda kalır. Değer verilmemiş yerel değişkenler 0 gibi inandırıcı bir değer değil, anlamsız bir sayı okur.
 
 ### Windows’tan gelen kod
 
@@ -82,8 +83,12 @@ ne olduğunu (ör. segmentation fault) ve nedenini Türkçe söyler.
 | `system("chcp 1254")`, `color`, `title`, `mode` | sorun çıkarmaz; Mac’te gerekmez |
 | `setlocale(LC_ALL, "Turkish")` | Türkçe yerel ayar |
 | `fflush(stdin)` | yazılan satırın kalanını atar, Windows’taki gibi |
-| `<conio.h>`: `getch`, `getche` | tek tuş okur |
-| `<windows.h>`: `Sleep`, `SetConsoleOutputCP`, `SetConsoleCP` | desteklenir |
+| `<conio.h>`: `getch`, `getche`, `kbhit`, `ungetch`, `putch`, `cputs`, `cprintf`, `cgets`, `cscanf` | tek tuş okur; ok tuşu 224 ve tarama kodu, Enter 13, Backspace 8 verir |
+| `<windows.h>`: `Sleep`, `Beep`, `HANDLE`, `GetStdHandle`, `SetConsoleCursorPosition`, `SetConsoleOutputCP`, `SetConsoleCP` | desteklenir |
+| `SetConsoleTextAttribute`, `system("color …")` | sorun çıkarmaz; konsol renk göstermez |
+| `strrev`, `strupr`, `strlwr`, `stricmp`, `strset`, `memicmp`, `itoa`, `lltoa`, `gets`, `fputchar` | desteklenir; aynı adda kendi fonksiyonunuz varsa o çalışır |
+| `<malloc.h>`, `<io.h>`, `<process.h>`, `<direct.h>`, `<dos.h>` | desteklenir |
+| Kendi `mergesort`, `getline`, `random`, `read` fonksiyonunuz ya da `index` değişkeniniz | Mac’in aynı adlı işlevleriyle çakışmaz |
 | `#include <bits/stdc++.h>` | desteklenir |
 | `int` yazılmamış `main()`, unutulmuş `#include` | Windows’taki GCC gibi hata değil, uyarı verir |
 

@@ -69,8 +69,8 @@ std::string describe_exit(int wait_status, double seconds) {
     case SIGSEGV: return crashed("segmentation fault", memory);
     case SIGBUS: return crashed("bus error", memory);
     case SIGFPE: return crashed("floating-point exception", "Aritmetik bir hata oluştu.");
-    case SIGILL:
-    case SIGTRAP: return crashed("trap", "Hiç çalışmaması gereken bir koda ulaştı.");
+    case SIGILL: return crashed("trap", "Hiç çalışmaması gereken bir koda ulaştı.");
+    case SIGTRAP: return crashed("sıfıra bölme", "Bir tam sayı sıfıra bölündü (ya da % 0 yazıldı); bu tanımsızdır.");
     case SIGABRT: return after + " sonra abort() ile kendini durdurdu.\r\nÖrneğin bir assert koşulu sağlanmadı.";
     case SIGINT: return after + " sonra Control-C ile durduruldu.";
     case SIGKILL: return after + " sonra sonlandırıldı.";

@@ -89,7 +89,9 @@ std::string quoted(std::string_view text, std::size_t from = 0) {
 
 // The header a beginner most often forgets for a library function.
 std::string_view header_of(std::string_view function) {
-    static constexpr std::array<std::pair<std::string_view, std::string_view>, 25> headers = {{
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 31> headers = {{
+        {"strrev", "string.h"}, {"strupr", "string.h"}, {"stricmp", "string.h"}, {"itoa", "stdlib.h"},
+        {"kbhit", "conio.h"},   {"cout", "iostream"},
         {"sqrt", "math.h"},     {"pow", "math.h"},      {"fabs", "math.h"},    {"floor", "math.h"},
         {"ceil", "math.h"},     {"round", "math.h"},    {"sin", "math.h"},     {"cos", "math.h"},
         {"tan", "math.h"},      {"log", "math.h"},      {"log10", "math.h"},   {"exp", "math.h"},
@@ -162,6 +164,7 @@ std::string explain(std::string_view message, std::string_view source_line) {
     if (starts("expected ';'")) return "Noktalı virgül (;) eksik.";
     if (starts("use of undeclared identifier '")) {
         if (has("did you mean '")) return "“" + name + "” tanımlı değil.";  // the compiler's fix names the right one
+        if (!header_of(name).empty()) return missing_function(name);
         return "“" + name + "” tanımlı değil: kullanmadan önce tanımlayın (örneğin int " + name + ";) ya da yazımını kontrol edin.";
     }
     if (starts("call to undeclared function '") || starts("call to undeclared library function '"))

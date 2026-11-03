@@ -27,7 +27,7 @@ struct CompileResult {
 constexpr std::string_view hint_prefix = "  ➜ ";
 
 // Compiles one C (or, by extension, C++) file the way code written on Windows expects: Windows console
-// idioms from the compat headers, gnu dialects, GCC's leniency, no optimisation.
+// idioms from the compat headers and the linked runtime, gnu dialects, GCC's leniency, no optimisation.
 CompileResult compile(const CompileRequest& request);
 
 // Whether `developer_dir`, as xcode-select -p prints it, holds a compiler: the Command Line Tools' or Xcode's.

@@ -1,22 +1,23 @@
-/* <conio.h> key reads on the C Editor console. */
+/* <conio.h> on the C Editor console. */
 #ifndef CEDIT_CONIO_H
 #define CEDIT_CONIO_H
-#include <stdio.h>
-#include <termios.h>
-#include <unistd.h>
-static inline int cedit_getch(int echo) {
-    struct termios saved, raw;
-    fflush(stdout);
-    tcgetattr(0, &saved);
-    raw = saved;
-    raw.c_lflag &= (tcflag_t)~(ICANON | (echo ? 0 : ECHO));
-    tcsetattr(0, TCSANOW, &raw);
-    int key = getchar();
-    tcsetattr(0, TCSANOW, &saved);
-    return key;
+#ifdef __cplusplus
+extern "C" {
+#endif
+int getch(void);
+int getche(void);
+int kbhit(void);
+int putch(int);
+int ungetch(int);
+int cprintf(const char *, ...);
+int cputs(const char *);
+int cscanf(const char *, ...);
+char *cgets(char *);
+#ifdef __cplusplus
 }
-static inline int getch(void) { return cedit_getch(0); }
-static inline int getche(void) { return cedit_getch(1); }
+#endif
 #define _getch getch
 #define _getche getche
+#define _kbhit kbhit
+#define _putch putch
 #endif

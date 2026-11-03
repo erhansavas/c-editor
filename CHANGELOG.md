@@ -1,5 +1,34 @@
 # Değişiklikler
 
+## 0.5.3 — 3 Kasım 2026
+
+Windows’ta yazılan kod için düzeltmeler ve eksik fonksiyonlar.
+
+**Program çalışırken**
+
+- Program çökerse o ana kadar yazdırdıkları kaybolmuyor: `printf("Sonuç: ");` satırı ardından gelen çökmede de görünür.
+- Tam sayıyı sıfıra bölmek (`a / b`, `a % b`) programı durdurur ve nedenini söyler. Önceden 0 sonucuyla sessizce devam ediyordu.
+- Değer verilmemiş yerel değişkenler ve diziler 0 gibi doğru görünen bir değer yerine anlamsız bir sayı okur.
+- `gets` çalışırken macOS’un İngilizce uyarısı artık ekrana çıkmıyor.
+
+**Klavye**
+
+- `getch`: ok tuşları 224 ve ardından tarama kodu (yukarı 72, aşağı 80, sol 75, sağ 77), Enter 13, Backspace 8, Ctrl+C 3 verir.
+
+**Eklenen fonksiyonlar**
+
+- `<conio.h>`: `kbhit`, `ungetch`, `putch`, `cputs`, `cprintf`, `cgets`, `cscanf`.
+- `<string.h>`: `strrev`, `strupr`, `strlwr`, `stricmp`, `strcmpi`, `strnicmp`, `strset`, `strnset`, `memicmp`.
+- `<stdlib.h>`: `itoa`, `ltoa`, `ultoa`, `lltoa`, `ulltoa`. `<stdio.h>`: `fputchar`, `fgetchar`.
+- `<windows.h>`: `Beep`, `HANDLE`, `GetStdHandle`, `SetConsoleTextAttribute`, `SetConsoleCursorPosition`, `COORD`, `WORD`.
+- `<malloc.h>`, `<io.h>`, `<process.h>`, `<direct.h>` (modsuz `mkdir`), `<dos.h>`.
+
+**Derleme**
+
+- Kendi `strrev`, `mergesort`, `heapsort`, `getline`, `random`, `read`, `write`, `close` fonksiyonunuz ya da `index` adlı değişkeniniz artık hata vermiyor.
+- `std::system`, `std::setlocale` ve `std::fflush` artık makroya takılmıyor.
+- Unutulan `<iostream>` için `cout`’ta ve `printf`, `rand`, `strlen` gibi adlarda başlık dosyasını söyleyen açıklama.
+
 ## 0.5.2 — 3 Kasım 2026
 
 Hata düzeltmeleri; yeni özellik yok.
